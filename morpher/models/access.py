@@ -1,10 +1,10 @@
 # coding=utf-8
 """
-Analytical energy demand model algorithm
+various scripts for accessing different flavors of climate models
 """
 
 import os
-import gcfsf
+import gcsfs
 import intake
 import warnings
 
@@ -37,7 +37,7 @@ def access_cmip6_data(models, pathway, variable):
     Returns
     -------
     dict
-        a dictionary of xarray datasets 
+        a dictionary of xarray datasets
 
     Examples
     --------
