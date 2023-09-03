@@ -5,7 +5,7 @@ This is what enables to slicing of the data from a percentile point of view.
 """
 import pandas as pd
 from xclim import ensembles
-from morpher.tools import utilities
+from pyepwmorph.tools import utilities
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -20,7 +20,7 @@ __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
 
 
-def build_cmip6_ensemble(percentiles, pathway, variable, datasets):
+def build_cmip6_ensemble(percentiles, variable, datasets):
     """
     Clean up the CMIP6 model data given known inconsistencies
     Additionally this script is necessary to spatially and temproally constrict the files
@@ -30,11 +30,9 @@ def build_cmip6_ensemble(percentiles, pathway, variable, datasets):
     percentiles : list of strings
         a dictionary of xarray datasets
         the output of access.access_cmip6_data
-    pathway : string
-        the pathway that is being worked on from ['historical','ssp126','ssp245','ssp585']
     variable : string
         the variable that is being worked on from ['tas','tasmax','tasmin','clt','psl','pr','huss','vas','uas','rsds']
-    model_data : dict
+    datasets : dict
         a dictionary of xarray datasets keyed by their name from the input dict
 
     Returns
@@ -45,16 +43,15 @@ def build_cmip6_ensemble(percentiles, pathway, variable, datasets):
 
     Examples
     --------
-    >>> build_cmip6_ensemble(['1','50','99'], 'historical', 'tas', datasets)
+    >>> build_cmip6_ensemble(['1','50','99'], 'tas', datasets)
     """
     ens = ensembles.create_ensemble([ds.reset_coords(drop=True) for ds in datasets.values()])
     ens_perc = ensembles.ensemble_percentiles(ens, values=percentiles, split=False)
     percentile_dict = dict()
     for ptilekey in percentiles:
-        percentile_dict.update({ptilekey: getattr(ens_perc, variable).sel(percentiles=ptilekey)[0]})
+        percentile_dict[ptilekey] = ens_perc.sel(percentiles=ptilekey)[variable].to_dataframe()[variable].rename(ptilekey)
 
-    df = pd.DataFrame(percentile_dict)
-    return df
+    return pd.DataFrame(percentile_dict)
 
 
 def calc_model_climatologies(baseline_range, future_range, baseline_data, future_data, variable):
@@ -88,7 +85,7 @@ def calc_model_climatologies(baseline_range, future_range, baseline_data, future
     # concat baseline and future into a single dataframe
     # this is important in the case that the baseline extends past 2015
     # which is typically considered the dividing point for historic data
-    full_data = pd.concat([baseline_data, future_data], axis=1)
+    full_data = pd.concat([baseline_data, future_data])
 
     # split back into the slices
     baseline_data = utilities.pandas_slice_year(full_data, baseline_range[0], baseline_range[1])

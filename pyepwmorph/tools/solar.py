@@ -6,7 +6,7 @@ import numpy as np
 import pvlib
 import pandas as pd
 from timezonefinder import TimezoneFinder
-from morpher.tools import utilities as morph_utils
+from pyepwmorph.tools import utilities as morph_utils
 import warnings
 
 warnings.filterwarnings("ignore")

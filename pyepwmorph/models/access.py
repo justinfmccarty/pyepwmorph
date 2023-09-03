@@ -44,8 +44,8 @@ def access_cmip6_data(models, pathway, variable):
     >>> access_cmip6_data(['ACCESS-CM2', 'CanESM5', 'TaiESM1'], 'ssp126', 'tas')
     """
     gcsfs.GCSFileSystem(token='anon')
-    datastore_json = os.path.join('assets', 'pangeo-cmip6.json')
-    esm_data = intake.open_esm_datastore.from_df(datastore_json)
+    # datastore_json = 'pangeo-cmip6.json'
+    esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")
     model_search = esm_data.search(experiment_id=pathway,
                                    table_id='Amon',  # atmospheric variables (A) saved at monthly resolution (mon)
                                    variable_id=variable,

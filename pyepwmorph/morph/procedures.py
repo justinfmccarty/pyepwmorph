@@ -15,8 +15,8 @@ import pandas as pd
 import pvlib
 from meteocalc import dew_point as calcdewpt
 
-from morpher.tools import utilities as morph_utils
-from morpher.tools import solar as morph_solar_utils
+from pyepwmorph.tools import utilities as morph_utils
+from pyepwmorph.tools import solar as morph_solar_utils
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -42,9 +42,9 @@ def shift_stretch(present, delta, scaling_factor, temporal_mean):
         the absolute change in the monthly mean value of the variable for the month (future - historical)
     scaling_factor : float
         the scaling factor to be applied, in th case of temperature it is -
-         (absolute_delta of tmax for a temporal slice - absolute_delta of tmin for a temporal slice)
+         (absolute_delta of tasmax for a temporal slice - absolute_delta of tasmin for a temporal slice)
          ----------------------------------------------------------------------------
-         (present dat tmax for a tmepral slice - present dat tmin for a tmepral slice)
+         (present dat tasmax for a tmepral slice - present dat tasmin for a tmepral slice)
     temporal_mean : float
         the mean of the present day values for a given temporal slice (typically monthly)
 
@@ -60,7 +60,7 @@ def shift_stretch(present, delta, scaling_factor, temporal_mean):
     return present + delta + scaling_factor * (present - temporal_mean)
 
 
-def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tmax, baseline_tmax, future_tmin, baseline_tmin):
+def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baseline_tasmax, future_tasmin, baseline_tasmin):
     """
     Drybulb temperature morph requires a combination of shift and stretch
 
@@ -78,19 +78,19 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tmax, baseline_
         an annual monthly climatology (12,) pandas series with the baseline DBT values
         this is typically from assemble.calc_model_climatologies function
 
-    future_tmax : pd.Series
+    future_tasmax : pd.Series
         an annual monthly climatology (12,) pandas series with the future DBT max values
         this is typically from assemble.calc_model_climatologies function
 
-    baseline_tmax : pd.Series
+    baseline_tasmax : pd.Series
         an annual monthly climatology (12,) pandas series with the baseline DBT max values
         this is typically from assemble.calc_model_climatologies function
 
-    future_tmin : pd.Series
+    future_tasmin : pd.Series
         an annual monthly climatology (12,) pandas series with the future DBT min values
         this is typically from assemble.calc_model_climatologies function
 
-    baseline_tmin : pd.Series
+    baseline_tasmin : pd.Series
         an annual monthly climatology (12,) pandas series with the baseline DBT min values
         this is typically from assemble.calc_model_climatologies function
     
@@ -106,12 +106,12 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tmax, baseline_
     """
     dbt_max_mean, dbt_min_mean, dbt_mean = morph_utils.min_max_mean_means(present_dbt)
     tas_delta = morph_utils.absolute_delta(future_tas, baseline_tas).values
-    tmin_delta = morph_utils.absolute_delta(future_tmin, baseline_tmin).values
-    tmax_delta = morph_utils.absolute_delta(future_tmax, baseline_tmax).values
+    tasmin_delta = morph_utils.absolute_delta(future_tasmin, baseline_tasmin).values
+    tasmax_delta = morph_utils.absolute_delta(future_tasmax, baseline_tasmax).values
 
     dbt_delta = morph_utils.zip_month_data(tas_delta)
 
-    dbt_scale = (tmax_delta - tmin_delta) / (dbt_max_mean - dbt_min_mean)
+    dbt_scale = (tasmax_delta - tasmin_delta) / (dbt_max_mean - dbt_min_mean)
     dbt_scale = morph_utils.zip_month_data(dbt_scale)
     dbt_mean = morph_utils.zip_month_data(dbt_mean)
 
@@ -269,7 +269,7 @@ def morph_wspd(present_wspd, future_vas, baseline_vas, future_uas, baseline_uas)
     df = pd.DataFrame(present_wspd.rename("windspd_ms"))
     df['month'] = df.index.month
 
-    morphed_wspd = df.apply(lambda x: stretch(x['atmos_Pa'],
+    morphed_wspd = df.apply(lambda x: stretch(x['windspd_ms'],
                                               scale_factor_wspd[x['month']]),
                             axis=1).astype(float)
 

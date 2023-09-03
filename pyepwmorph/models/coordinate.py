@@ -17,7 +17,7 @@ __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
 
-def coordinate_cmip6_data(latitude, longitude, pathway, dset_dict):
+def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
     """
     Clean up the CMIP6 model data given known inconsistencies
     Additionally this script is necessary to spatially and temproally constrict the files
@@ -41,7 +41,7 @@ def coordinate_cmip6_data(latitude, longitude, pathway, dset_dict):
 
     Examples
     --------
-    >>> coordinate_cmip6_data(49.267, -122.301, 'ssp126', dset_dict)
+    >>> coordinate_cmip6_data(49.267, -122.301, 'ssp126', 'tas', dset_dict)
     """
 
     # set the blank dict for the datasets to be placed in keyed by source_id
@@ -67,15 +67,22 @@ def coordinate_cmip6_data(latitude, longitude, pathway, dset_dict):
         # drop redundant variables (like "height: 2m")
         for coord in ds.coords:
             if coord not in ['lat', 'lon', 'time']:
-                ds = ds.drop_sel(coord)
+                ds = ds.drop_vars(coord)
 
         # formalize the index datatypes
         ds.coords['year'] = ds.time.dt.year
-        ds.coords['time'] = xr.cftime_range(start=str(ds.time.dt.year.values[0]),
+        ds.coords['time'] = xr.date_range(start=str(ds.time.dt.year.values[0]),
                                             periods=len(ds.time.dt.year.values),
-                                            freq="MS", calendar="noleap")
+                                            freq="MS", calendar="standard",
+                                            use_cftime=False)
 
         # Add variable array to dictionary
+        for d in ds.dims:
+            if d == 'time':
+                pass
+            else:
+                ds[variable] = ds[variable].sel({f'{d}': 0}, drop=True)
+
         ds_dict[name] = ds
 
     datasets = dask.compute(ds_dict)[0]
