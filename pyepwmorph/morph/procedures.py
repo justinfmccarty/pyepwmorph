@@ -26,8 +26,8 @@ def shift(present, delta):
     return present + delta
 
 
-def stretch(present, shift_factor):
-    return present * shift_factor
+def stretch(present, stretch_factor):
+    return present * stretch_factor
 
 
 def shift_stretch(present, delta, scaling_factor, temporal_mean):
@@ -126,7 +126,7 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
     return round(morphed_dbt, 2).rename("drybulb_C")
 
 
-def morph_relhum(present_relhum, future_relhum, baseline_relhum):
+def morph_relhum(present_relhum, future_huss, baseline_huss):
     """
     Relative humidity morph requires a stretch
 
@@ -136,12 +136,12 @@ def morph_relhum(present_relhum, future_relhum, baseline_relhum):
         an hourly annual (8760,) pandas series with the present day relative humidity as perecentage (75.1)
             and a datetime index (this typically comes from the EPW)
 
-    future_relhum : pd.Series
-        an annual monthly climatology (12,) pandas series with the future relative humidity as perecentage (75.1)
+    future_huss : pd.Series
+        an annual monthly climatology (12,) pandas series with the future specific humidity as perecentage (75.1)
             this is typically from assemble.calc_model_climatologies function
 
-    baseline_relhum : pd.Series
-        an annual monthly climatology (12,) pandas series with the baseline relative humidity as perecentage (75.1)
+    baseline_huss : pd.Series
+        an annual monthly climatology (12,) pandas series with the baseline specific humidity as perecentage (75.1)
             this is typically from assemble.calc_model_climatologies function
 
     Returns
@@ -150,13 +150,13 @@ def morph_relhum(present_relhum, future_relhum, baseline_relhum):
         a pandas Series of the same shape as present day input
     """
     # requires future_ and historical_ inputs to be monthly climatologies
-    relhum_delta = morph_utils.absolute_delta(future_relhum, baseline_relhum).values
-    relhum_change = morph_utils.zip_month_data(relhum_delta)
+    relhum_stretch = morph_utils.relative_delta(future_huss, baseline_huss).values
+    relhum_change = morph_utils.zip_month_data(relhum_stretch)
 
     df = pd.DataFrame(present_relhum.rename("relhum_percent"))
     df['month'] = df.index.month
 
-    morphed_relhum = df.apply(lambda x: shift(x['relhum_percent'],
+    morphed_relhum = df.apply(lambda x: stretch(x['relhum_percent'],
                                               relhum_change[x['month']]),
                               axis=1).astype(float)
     morphed_relhum = pd.Series(np.clip(morphed_relhum.values, 1, 100))

@@ -6,6 +6,7 @@ these scripts provide help to coordinate them into a standard system before bein
 import xarray as xr
 import warnings
 import dask
+
 warnings.filterwarnings("ignore")
 
 __author__ = "Justin McCarty"
@@ -16,6 +17,7 @@ __version__ = "0.1"
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
+
 
 def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
     """
@@ -39,9 +41,6 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
     dict
         a dictionary of xarray datasets keyed by their name from the input dict
 
-    Examples
-    --------
-    >>> coordinate_cmip6_data(49.267, -122.301, 'ssp126', 'tas', dset_dict)
     """
 
     # set the blank dict for the datasets to be placed in keyed by source_id
@@ -55,12 +54,6 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
         # temporary hack, not sure why I need this but has to do with calendar-aware metadata on the time variable
         ds = xr.decode_cf(ds)
 
-        # cosntrict the bounds of the file based on pathway or historical
-        if 'historical' in pathway:
-            ds = ds.sel(time=slice('1960', '2014'))
-        else:
-            ds = ds.sel(time=slice('2015', '2100'))
-
         # select the spatially relevant data
         ds = ds.sel(lat=latitude, lon=longitude, method='nearest')
 
@@ -72,9 +65,9 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
         # formalize the index datatypes
         ds.coords['year'] = ds.time.dt.year
         ds.coords['time'] = xr.date_range(start=str(ds.time.dt.year.values[0]),
-                                            periods=len(ds.time.dt.year.values),
-                                            freq="MS", calendar="standard",
-                                            use_cftime=False)
+                                          periods=len(ds.time.dt.year.values),
+                                          freq="MS", calendar="standard",
+                                          use_cftime=False)
 
         # Add variable array to dictionary
         for d in ds.dims:
@@ -83,10 +76,14 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
             else:
                 ds[variable] = ds[variable].sel({f'{d}': 0}, drop=True)
 
+        # constrict the bounds of the file based on pathway or historical
+        if pathway == 'historical':
+            ds = ds.sel(time=slice('1960', '2014'))
+        else:
+            ds = ds.sel(time=slice('2015', '2100'))
+
         ds_dict[name] = ds
 
     datasets = dask.compute(ds_dict)[0]
 
     return datasets
-
-

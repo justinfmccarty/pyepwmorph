@@ -5,6 +5,8 @@ The package was developed to serve two purposes:
     2. provide succinct workflows of those tools to automate the process of intaking climate data and morphing an EPW file
 The second task is dealt with throughout the following scripts
 """
+import datetime
+
 from pyepwmorph.models import access, coordinate, assemble
 from pyepwmorph.morph import procedures
 from pyepwmorph.tools import io as morph_io
@@ -122,18 +124,15 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
 
     Returns
     -------
-    dict
-        a dict of dicts of pandas dataframes where pathway is the first key is the pathway and the second key is variable
+    epw object
+        a updated epw object with the morphed data
     """
-    # input epw_dataframe
+    # input epw_object.dataframe
     # create blank dict
     # iterate through each if variable statement
     # add to blank dataframe using column names of existing epw
     # at end replace columns in existing with columns in new by iterating through columns in new
-
-    epw_dataframe = morph_io.read_epw_dataframe(epw_file)
-    epw_string = morph_io.read_epw_string(epw_file)
-    epw_location = morph_io.epw_location(epw_file)
+    epw_object = morph_io.Epw(epw_file)
 
     morphed_dict = {}
 
@@ -157,7 +156,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                            percentile],
                                                                        model_data_dict[pathway]['tasmin'][percentile],
                                                                        'tasmin')
-                present_dbt = epw_dataframe['drybulb_C']
+                present_dbt = epw_object.dataframe['drybulb_C']
                 morphed_dbt = procedures.morph_dbt_year(present_dbt,
                                                         tas_climatologies[1], tas_climatologies[0],
                                                         tmax_climatologies[1], tmax_climatologies[0],
@@ -176,7 +175,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                          model_data_dict[pathway]['huss'][percentile],
                                                                          'huss')
 
-                present_relhum = epw_dataframe['relhum_percent']
+                present_relhum = epw_object.dataframe['relhum_percent']
                 morphed_relhum = procedures.morph_relhum(present_relhum,
                                                          relhum_climatologies[1], relhum_climatologies[0]
                                                          ).values
@@ -206,7 +205,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                            percentile],
                                                                        model_data_dict[pathway]['tasmin'][percentile],
                                                                        'tasmin')
-                present_dbt = epw_dataframe['drybulb_C']
+                present_dbt = epw_object.dataframe['drybulb_C']
                 morphed_dbt = procedures.morph_dbt_year(present_dbt,
                                                         tas_climatologies[1], tas_climatologies[0],
                                                         tmax_climatologies[1], tmax_climatologies[0],
@@ -220,7 +219,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                          model_data_dict[pathway]['huss'][percentile],
                                                                          'huss')
 
-                present_relhum = epw_dataframe['relhum_percent']
+                present_relhum = epw_object.dataframe['relhum_percent']
                 morphed_relhum = procedures.morph_relhum(present_relhum,
                                                          relhum_climatologies[1], relhum_climatologies[0]
                                                          ).values
@@ -239,7 +238,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                   model_data_dict[pathway]['psl'][percentile],
                                                                   'psl')
 
-            present_psl = epw_dataframe['atmos_Pa']
+            present_psl = epw_object.dataframe['atmos_Pa']
             moprhed_psl = procedures.morph_relhum(present_psl,
                                                   psl_climatologies[1], psl_climatologies[0]
                                                   ).values
@@ -255,7 +254,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                                   model_data_dict[pathway]['uas'][percentile],
                                                                   'uas')
 
-            present_wspd = epw_dataframe['windspd_ms']
+            present_wspd = epw_object.dataframe['windspd_ms']
             moprhed_wspd = procedures.morph_wspd(present_wspd,
                                                  vas_climatologies[1], vas_climatologies[0],
                                                  uas_climatologies[1], uas_climatologies[0]
@@ -264,27 +263,26 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
 
         elif variable == 'Clouds and Radiation':
             # do morphing for glohor, diffhor, dirnor, tsc, osc
-            longitude = epw_location['longitude']
-            latitude = epw_location['latitude']
-            utc_offset = epw_location['utc_offset']
+            longitude = epw_object.location['longitude']
+            latitude = epw_object.location['latitude']
+            utc_offset = epw_object.location['utc_offset']
 
             rsds_climatologies = assemble.calc_model_climatologies(baseline_range, future_range,
-                                                                  model_data_dict['historical']['rsds'][percentile],
-                                                                  model_data_dict[pathway]['rsds'][percentile],
-                                                                  'rsds')
+                                                                   model_data_dict['historical']['rsds'][percentile],
+                                                                   model_data_dict[pathway]['rsds'][percentile],
+                                                                   'rsds')
             clt_climatologies = assemble.calc_model_climatologies(baseline_range, future_range,
                                                                   model_data_dict['historical']['clt'][percentile],
                                                                   model_data_dict[pathway]['clt'][percentile],
                                                                   'clt')
 
-
-            present_glohor = epw_dataframe['glohorrad_Whm2']
+            present_glohor = epw_object.dataframe['glohorrad_Whm2']
             morphed_glohor = procedures.morph_glohor(present_glohor,
                                                      rsds_climatologies[1], rsds_climatologies[0]
                                                      ).values
             morphed_dict['glohorrad_Whm2'] = morphed_glohor
 
-            present_exthor = epw_dataframe['exthorrad_Whm2']
+            present_exthor = epw_object.dataframe['exthorrad_Whm2']
             morphed_diffhor = procedures.calc_diffhor(longitude, latitude, utc_offset,
                                                       morphed_glohor, present_exthor
                                                       ).values
@@ -294,14 +292,26 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                     ).values
             morphed_dict['dirnorrad_Whm2'] = morphed_dirnor
 
-            present_tsc = epw_dataframe['totskycvr_tenths']
+            present_tsc = epw_object.dataframe['totskycvr_tenths']
             morphed_tsc = procedures.calc_tsc(present_tsc,
                                               clt_climatologies[1], clt_climatologies[0]
                                               ).values
             morphed_dict['totskycvr_tenths'] = morphed_tsc
 
-            present_osc = epw_dataframe['opaqskycvr_tenths']
+            present_osc = epw_object.dataframe['opaqskycvr_tenths']
             morphed_osc = procedures.calc_osc(morphed_tsc,
                                               present_osc, present_tsc
                                               ).values
             morphed_dict['opaqskycvr_tenths'] = morphed_osc
+
+    for n, i in enumerate(morphed_dict.items()):
+        k = i[0]
+        v = i[1]
+        epw_object.dataframe[k] = v
+        if n == 0:
+            epw_object.headers['COMMENTS 2'][
+                0] += f'morphed for {pathway} ({future_range}) with pyepwmorph on {datetime.datetime.now().isoformat()}: {k},'
+        else:
+            epw_object.headers['COMMENTS 2'][0] += f'{k},'
+
+    return epw_object
