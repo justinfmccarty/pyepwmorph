@@ -3,7 +3,6 @@
 various scripts for accessing different flavors of climate models
 """
 
-import os
 import gcsfs
 import intake
 import warnings
