@@ -1,7 +1,7 @@
 from distutils.core import setup
 setup(
   name = 'pyeopwmorph',         # How you named your package folder (MyLib)
-  packages = ['pyepwmorh'],   # Chose the same as "name"
+  packages = ['pyepwmorph'],   # Chose the same as "name"
   version = '0.1',      # Start with a small number and increase it with every change you make
   license='GPLv3',        # Chose a license from here: https://help.github.com/articles/licensing-a-repository
   description = 'A python package to enable simple and easy gathering of climate model data and morphing of EPW files',   # Give a short description about your library
@@ -23,10 +23,10 @@ setup(
           'meteocalc',
       ],
   classifiers=[
-    'Development Status :: 3 - Alpha',      # Chose either "3 - Alpha", "4 - Beta" or "5 - Production/Stable" as the current state of your package
-    'Intended Audience :: Researchers',      # Define that your audience are developers
+    'Development Status :: 5 - Production/Stable',      # Chose either "3 - Alpha", "4 - Beta" or "5 - Production/Stable" as the current state of your package
+    'Intended Audience :: Science/Research',      # Define that your audience are developers
     'Topic :: Software Development :: Build Tools',
-    'License :: OSI Approved :: GPLv3',   # Again, pick a license
+    'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',   # Again, pick a license
     'Programming Language :: Python :: 3.10',
   ],
 )
