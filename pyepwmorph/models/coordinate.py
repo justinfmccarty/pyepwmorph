@@ -51,8 +51,15 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
         if ('longitude' in ds.dims) and ('latitude' in ds.dims):
             ds = ds.rename({'longitude': 'lon', 'latitude': 'lat'})  # some models labelled dimensions differently...
 
-        # temporary hack, not sure why I need this but has to do with calendar-aware metadata on the time variable
+        # decode for days-since or hours-since
+        # http://cfconventions.org/Data/cf-conventions/cf-conventions-1.10/cf-conventions.html#time-coordinate
         ds = xr.decode_cf(ds)
+
+        # constrict the bounds of the file based on pathway or historical
+        if pathway == 'historical':
+            ds = ds.sel(time=slice('1960', '2014'))
+        else:
+            ds = ds.sel(time=slice('2015', '2100'))
 
         # select the spatially relevant data
         ds = ds.sel(lat=latitude, lon=longitude, method='nearest')
@@ -75,12 +82,6 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
                 pass
             else:
                 ds[variable] = ds[variable].sel({f'{d}': 0}, drop=True)
-
-        # constrict the bounds of the file based on pathway or historical
-        if pathway == 'historical':
-            ds = ds.sel(time=slice('1960', '2014'))
-        else:
-            ds = ds.sel(time=slice('2015', '2100'))
 
         ds_dict[name] = ds
 
