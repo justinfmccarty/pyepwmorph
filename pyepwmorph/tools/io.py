@@ -108,15 +108,15 @@ class Epw():
 
         """
 
-        self.headers = self._read_headers()
-        self.dataframe = self._read_data()
-        self.string = self._read_string()
-        self.location = self._read_location()
+        self._read_headers()
+        self._read_data()
+        self._read_string()
+        self._read_location()
 
     def _read_string(self):
         with open(self.fp, "r") as fp:
             file_content = fp.readlines()
-        return file_content
+        self.string = file_content
 
     def _read_location(self):
         location_line = self.string[0].replace("\n", "").split(",")
@@ -127,7 +127,7 @@ class Epw():
         location_dict['latitude'] = float(location_dict['latitude'])
         location_dict['elevation'] = float(location_dict['elevation'])
         location_dict['utc_offset'] = float(location_dict['utc_offset'])
-        return location_dict
+        self.location = location_dict
 
     def _read_headers(self):
         """Reads the headers of an epw file
@@ -148,7 +148,7 @@ class Epw():
                     break
                 else:
                     d[row[0]] = row[1:]
-        return d
+        self.headers = d
 
     def _read_data(self):
         """Reads the climate data of an epw file
@@ -204,7 +204,7 @@ class Epw():
                          names=names)
 
         df.set_index(morph_utils.ts_8760(year=datetime.datetime.now().year), inplace=True)
-        return df
+        self.dataframe = df
 
     def _first_row_with_climate_data(self):
         """Finds the first row with the climate data of an epw file

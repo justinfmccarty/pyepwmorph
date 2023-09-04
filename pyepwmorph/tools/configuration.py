@@ -25,37 +25,37 @@ class MorphConfig(object):
         tools.workflow to automate processing. It is also meant ot be leveraged in apps developed such as MESA.
     """
 
-    def __init__(self, epw_fp):
-        self.project_name = None
-        self.percentiles = None
-        self.output_directory = None
-        self.epw_fp = epw_fp
-        self.epw_str = morpher_io.read_epw_string(self.epw_fp)
-        self.epw_df = morpher_io.read_epw_dataframe(self.epw_fp)
+    def __init__(self, project_name, epw_fp, model_sources, user_variables, percentiles, output_directory):
+        self.project_name = project_name
+        self.epw = morpher_io.Epw(epw_fp)
+        self.model_sources = model_sources
+        self.user_variables = user_variables
+        self.percentiles = percentiles
+
         self.location = {'latitude': None,
                          'longitude': None,
                          'elevation': None,
-                         'utcoffset': None}
-        self.baselinestart = None
-        self.baselineend = None
-        self.user_pathways = None
-        self.model_pathways = None
-        self.yearranges = None
-        self.modelsources = None
-        self.user_variables = None
-        self.model_variables = None
+                         'utc_offset': None}
+        self.baseline_range = ()
+        self.user_pathways = []
+        self.model_pathways = []
+        self.future_years = []
+        self.future_ranges = []
+        self.model_variables = []
+
+        self.output_directory = output_directory
+
+        self.assign_from_epw()
+        self.assign_model_variables()
+        self.assign_model_pathways()
 
     def assign_from_epw(self):
 
-        dict_epw_location = morpher_io.epw_location(self.epw_str)
-        self.location['latitude'] = dict_epw_location['latitude']
-        self.location['longitude'] = dict_epw_location['longitude']
-        self.location['elevation'] = dict_epw_location['elevation']
-        self.location['utcoffset'] = dict_epw_location['utcoffset']
-
-        baseline_range = morpher_io.epw_baseline_range(self.epw_str)
-        self.baselinestart = baseline_range[0]
-        self.baselineend = baseline_range[0]
+        self.location['latitude'] = self.epw.location['latitude']
+        self.location['longitude'] = self.epw.location['longitude']
+        self.location['elevation'] = self.epw.location['elevation']
+        self.location['utc_offset'] = self.epw.location['utc_offset']
+        self.baseline_range = self.epw.detect_baseline_range()
 
     def assign_model_variables(self):
         """

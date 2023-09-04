@@ -6,7 +6,7 @@ these scripts provide help to coordinate them into a standard system before bein
 import xarray as xr
 import warnings
 import dask
-
+import pandas as pd
 warnings.filterwarnings("ignore")
 
 __author__ = "Justin McCarty"
@@ -46,7 +46,6 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
     # set the blank dict for the datasets to be placed in keyed by source_id
     ds_dict = {}
     for name, ds in dset_dict.items():
-        print(name)
         # rename spatial dimensions if necessary
         if ('longitude' in ds.dims) and ('latitude' in ds.dims):
             ds = ds.rename({'longitude': 'lon', 'latitude': 'lat'})  # some models labelled dimensions differently...
