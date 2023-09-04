@@ -69,8 +69,10 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
             if coord not in ['lat', 'lon', 'time']:
                 ds = ds.drop_vars(coord)
 
-        # formalize the index datatypes
+        # need year for the date_range
         ds.coords['year'] = ds.time.dt.year
+
+        # make a pandas data_range which is needed later on for resampling
         ds.coords['time'] = xr.date_range(start=str(ds.time.dt.year.values[0]),
                                           periods=len(ds.time.dt.year.values),
                                           freq="MS", calendar="standard",
