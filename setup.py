@@ -2,13 +2,13 @@ from distutils.core import setup
 setup(
   name = 'pyepwmorph',         # How you named your package folder (MyLib)
   packages = ['pyepwmorph','pyepwmorph.models','pyepwmorph.morph','pyepwmorph.tools'],
-  version = '0.2.4',      # Start with a small number and increase it with every change you make
+  version = '0.2.5',      # Start with a small number and increase it with every change you make
   license='GPLv3',        # Chose a license from here: https://help.github.com/articles/licensing-a-repository
   description = 'A python package to enable simple and easy gathering of climate model data and morphing of EPW files',   # Give a short description about your library
   author = 'Justin McCarty',                   # Type in your name
   author_email = 'mccarty.justin.f@gmail.com',      # Type in your E-Mail
   url = 'https://github.com/justinfmccarty/pyepwmorph',   # Provide either the link to your github or to your website
-  download_url = 'https://github.com/justinfmccarty/pyepwmorph/archive/refs/tags/v0.2.4.tar.gz',
+  download_url = 'https://github.com/justinfmccarty/pyepwmorph/archive/refs/tags/v0.2.5.tar.gz',
   keywords = ['EPW', 'MORPH', 'TMY', 'CLIMATE CHANGE', 'CMIP6', 'PANGEO'],   # Keywords that define your package best
   install_requires=[            # what gets imported in files
           'timezonefinder',

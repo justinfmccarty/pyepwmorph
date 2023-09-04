@@ -132,7 +132,10 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
     # iterate through each if variable statement
     # add to blank dataframe using column names of existing epw
     # at end replace columns in existing with columns in new by iterating through columns in new
-    epw_object = morph_io.Epw(epw_file)
+    if type(epw_file) == str:
+        epw_object = morph_io.Epw(epw_file)
+    else:
+        epw_object = epw_file
 
     morphed_dict = {}
 
