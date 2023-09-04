@@ -25,11 +25,12 @@ class MorphConfig(object):
         tools.workflow to automate processing. It is also meant ot be leveraged in apps developed such as MESA.
     """
 
-    def __init__(self, project_name, epw_fp, model_sources, user_variables, percentiles, output_directory):
+    def __init__(self, project_name, epw_fp, model_sources, user_variables, user_pathways, percentiles, output_directory):
         self.project_name = project_name
         self.epw = morpher_io.Epw(epw_fp)
         self.model_sources = model_sources
         self.user_variables = user_variables
+        self.user_pathways = user_pathways
         self.percentiles = percentiles
 
         self.location = {'latitude': None,
@@ -37,7 +38,6 @@ class MorphConfig(object):
                          'elevation': None,
                          'utc_offset': None}
         self.baseline_range = ()
-        self.user_pathways = []
         self.model_pathways = []
         self.future_years = []
         self.future_ranges = []
