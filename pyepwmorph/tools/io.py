@@ -265,7 +265,10 @@ class Epw():
             fp.write(self.make_epw_string())
 
     def detect_baseline_range(self):
-        subl = [l for l in self.string if "Period of Record" in l][0].replace("\n", "").split("Period of Record")[
-            -1].replace("=", " ").replace(";", " ").replace("-", " ")
-        years = np.array(list(set([int(y) for y in re.findall(r'\d{4}', subl)])))
+        try:
+            subl = [l for l in self.string if "Period of Record" in l][0].replace("\n", "").split("Period of Record")[
+                -1].replace("=", " ").replace(";", " ").replace("-", " ")
+            years = np.array(list(set([int(y) for y in re.findall(r'\d{4}', subl)])))
+        except IndexError:
+            years = self.dataframe['year'].to_numpy()
         return (years.min(), years.max())
