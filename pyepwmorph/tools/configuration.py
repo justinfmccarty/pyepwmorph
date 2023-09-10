@@ -25,19 +25,18 @@ class MorphConfig(object):
         tools.workflow to automate processing. It is also meant ot be leveraged in apps developed such as MESA.
     """
 
-    def __init__(self, project_name, epw_fp, model_sources, user_variables, user_pathways, percentiles, output_directory):
+    def __init__(self, project_name, epw_fp, model_sources, user_variables, user_pathways, percentiles, output_directory, baseline_range=None):
         self.project_name = project_name
         self.epw = morpher_io.Epw(epw_fp)
         self.model_sources = model_sources
         self.user_variables = user_variables
         self.user_pathways = user_pathways
         self.percentiles = percentiles
-
         self.location = {'latitude': None,
                          'longitude': None,
                          'elevation': None,
                          'utc_offset': None}
-        self.baseline_range = ()
+        self.baseline_range = baseline_range
         self.model_pathways = []
         self.future_years = []
         self.future_ranges = []
@@ -55,7 +54,8 @@ class MorphConfig(object):
         self.location['longitude'] = self.epw.location['longitude']
         self.location['elevation'] = self.epw.location['elevation']
         self.location['utc_offset'] = self.epw.location['utc_offset']
-        self.baseline_range = self.epw.detect_baseline_range()
+        if self.baseline_range is None:
+            self.baseline_range = self.epw.detect_baseline_range()
 
     def assign_model_variables(self):
         """
@@ -98,4 +98,4 @@ class MorphConfig(object):
                 self.model_pathways += ['historical', 'ssp585']
             else:
                 pass
-        self.model_variables = list(set(self.model_variables))
+        self.model_pathways = list(set(self.model_pathways))

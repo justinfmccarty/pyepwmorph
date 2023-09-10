@@ -5,6 +5,7 @@ The package was developed to serve two purposes:
     2. provide succinct workflows of those tools to automate the process of intaking climate data and morphing an EPW file
 The second task is dealt with throughout the following scripts
 """
+import copy
 import datetime
 
 from pyepwmorph.models import access, coordinate, assemble
@@ -135,7 +136,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
     if type(epw_file) == str:
         epw_object = morph_io.Epw(epw_file)
     else:
-        epw_object = epw_file
+        epw_object = copy.deepcopy(epw_file)
 
     morphed_dict = {}
 
