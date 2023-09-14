@@ -338,7 +338,7 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
                                                 glohor_shift_factors[x['month']]),
                               axis=1).astype(float)
 
-    return round(morphed_glohor, 2).rename("atmos_Pa")
+    return round(morphed_glohor, 2).rename("glohorrad_Whm2")
 
 
 def calc_diffhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor):
@@ -379,8 +379,8 @@ def calc_diffhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor
     solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset)
     solar_df['solar_alt'] = solar_df.apply(lambda x: morph_solar_utils.calc_solar_alt(x['zenith']),
                                            axis=1)
-    solar_df['glohorrad_Whm2'] = morphed_glohor.values
-    solar_df['glohorrad_Whm2'] = morphed_glohor.values
+    solar_df['glohorrad_Whm2'] = morphed_glohor
+    solar_df['glohorrad_Whm2'] = morphed_glohor
 
     # calc clearness from morphed glohor
     hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(morphed_glohor, present_exthor)
