@@ -45,9 +45,11 @@ class MorphConfig(object):
 
         self.model_pathways = []
         self.model_variables = []
-
-        self.output_directory = output_directory
-        Path(self.output_directory).mkdir(parents=True, exist_ok=True)
+        if output_directory is None:
+            pass
+        else:
+            self.output_directory = output_directory
+            Path(self.output_directory).mkdir(parents=True, exist_ok=True)
 
 
         self.assign_from_epw()
