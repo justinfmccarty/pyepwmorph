@@ -12,10 +12,9 @@ import math
 
 import numpy as np
 import pandas as pd
-import pvlib
-from meteocalc import dew_point as calcdewpt
 
 from pyepwmorph.tools import utilities as morph_utils
+from pyepwmorph.tools import ladybug_psychrometrics as psych
 from pyepwmorph.tools import solar as morph_solar_utils
 import warnings
 
@@ -67,9 +66,9 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
     Parameters
     ----------
     present_dbt : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the present day drybulb temperatures 
+        an hourly annual (8760,) pandas series with the present day drybulb temperatures
             and a datetime index (this typically comes from the EPW)
-    
+
     future_tas : pd.Series
         an annual monthly climatology (12,) pandas series with the future DBT values
         this is typically from assemble.calc_model_climatologies function
@@ -93,7 +92,7 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
     baseline_tasmin : pd.Series
         an annual monthly climatology (12,) pandas series with the baseline DBT min values
         this is typically from assemble.calc_model_climatologies function
-    
+
 
     Returns
     -------
@@ -126,7 +125,7 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
     return round(morphed_dbt, 2).rename("drybulb_C")
 
 
-def morph_relhum(present_relhum, future_huss, baseline_huss):
+def morph_relhum(present_relhum, present_psl, present_dbt, future_psl, future_dbt, future_huss, baseline_huss):
     """
     Relative humidity morph requires a stretch
 
@@ -150,15 +149,63 @@ def morph_relhum(present_relhum, future_huss, baseline_huss):
         a pandas Series of the same shape as present day input
     """
     # requires future_ and historical_ inputs to be monthly climatologies
-    relhum_stretch = morph_utils.relative_delta(future_huss, baseline_huss).values
-    relhum_change = morph_utils.zip_month_data(relhum_stretch)
+    huss_delta = morph_utils.relative_delta(future_huss, baseline_huss).values
+    huss_delta = 1 + (huss_delta / 100)
+    huss_change = morph_utils.zip_month_data(huss_delta)
 
     df = pd.DataFrame(present_relhum.rename("relhum_percent"))
+    df['atmos_Pa'] = present_psl
+    df['drybulb_C'] = present_dbt
     df['month'] = df.index.month
+    df['dewpoint'] = df.apply(lambda x: psych.dew_point_from_db_rh(x['drybulb_C'], x['relhum_percent']),axis=1)
 
-    morphed_relhum = df.apply(lambda x: stretch(x['relhum_percent'],
-                                              relhum_change[x['month']]),
+    def morph_huss_to_relhum(present_dbt_C, present_relhum, present_atmos_Pa, huss_delta_month, future_atmos_Pa, future_dbt_C):
+
+        # part 1 calculate present day specific humidity
+        present_dbt_K = present_dbt_C + 273.15
+        present_sat_pressure_water_vapor_Pa = psych.saturated_vapor_pressure(present_dbt_K)
+        present_sat_pressure_water_vapor_kPa = present_sat_pressure_water_vapor_Pa / 1000
+
+        present_wet_bulb_C = psych.wet_bulb_from_db_rh(present_dbt_C, present_relhum, present_atmos_Pa)
+
+        present_atmos_kPa = present_atmos_Pa / 1000
+
+        if present_wet_bulb_C >= 0:
+            A = 6.66e-4
+        else:
+            A = 5.94e-4
+
+        present_partial_pressure_kPa = present_sat_pressure_water_vapor_kPa - present_atmos_kPa * A * (present_dbt_C - present_wet_bulb_C)
+        present_humidity_ratio_kg_kg = 0.62198 * (present_partial_pressure_kPa / (present_atmos_kPa - present_partial_pressure_kPa))
+        present_spec_hum_kg_kg = present_humidity_ratio_kg_kg / (1 + present_humidity_ratio_kg_kg)
+
+        # part 2 morph specific humidity
+        stretch_factor = 1 + (huss_delta_month / 100)
+        morphed_spec_hum_kg_kg = present_spec_hum_kg_kg * stretch_factor
+
+        # part 3 convert back to relative humidity
+        future_humidity_ratio_kg_kg = morphed_spec_hum_kg_kg / (1 - morphed_spec_hum_kg_kg)
+        future_atmos_kPa = future_atmos_Pa / 1000
+        future_partial_pressure_water_vapor_kPa = (future_humidity_ratio_kg_kg * future_atmos_kPa) / (0.62198 + future_humidity_ratio_kg_kg)
+        future_dbt_K = future_dbt_C + 273.15
+        future_sat_pressure_water_vapor_Pa = psych.saturated_vapor_pressure(future_dbt_K)
+        future_sat_pressure_water_vapor_kPa = future_sat_pressure_water_vapor_Pa / 1000
+        morphed_relhum = future_partial_pressure_water_vapor_kPa / future_sat_pressure_water_vapor_kPa
+        return morphed_relhum * 100
+
+
+
+    df['fut_atmos_Pa'] = future_psl
+    df['fut_drybulb_C'] = future_dbt
+    morphed_relhum = df.apply(lambda x: morph_huss_to_relhum(x['drybulb_C'],
+                                                                 x['relhum_percent'],
+                                                                 x['atmos_Pa'],
+                                                                 huss_change[x['month']],
+                                                                 x['fut_atmos_Pa'],
+                                                                 x['fut_drybulb_C'],
+                                                                 ),
                               axis=1).astype(float)
+
     morphed_relhum = pd.Series(np.clip(morphed_relhum.values, 1, 100))
     return round(morphed_relhum, 2).rename("relhum_percent")
 
@@ -197,7 +244,7 @@ def morph_psl(present_psl, future_psl, baseline_psl):
                                            psl_change[x['month']]),
                            axis=1).astype(float)
 
-    return round(morphed_psl, 2).rename("atmos_Pa")
+    return round(morphed_psl, 0).rename("atmos_Pa").astype(int)
 
 
 def morph_dewpt(future_dbt, future_relhm):
@@ -219,8 +266,8 @@ def morph_dewpt(future_dbt, future_relhm):
     """
     df = pd.DataFrame({"drybulb_C": future_dbt,
                        "relhum_percent": np.clip(future_relhm, 1, 100)})
-    morphed_dewpt = df.apply(lambda x: calcdewpt(x['drybulb_C'],
-                                                 x['relhum_percent']),
+    morphed_dewpt = df.apply(lambda x: psych.dew_point_from_db_rh(x['drybulb_C'],
+                                                                  x['relhum_percent']),
                              axis=1).astype(float)
     return round(morphed_dewpt, 2).rename("dewpoint_C")
 
@@ -401,7 +448,7 @@ def calc_diffhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor
     return round(morphed_diffhor, 2).rename('diffhorrad_Whm2')
 
 
-def calc_dirnor(morphed_glohor, longitude, latitude, utc_offset):
+def calc_dirnor(morphed_glohor, morphed_diffhor, longitude, latitude, utc_offset):
     """
     Direct normal radiation morph is a recalculation based on the morphed global horizontal
         essentially a wrapper around pvlib's method
@@ -427,7 +474,15 @@ def calc_dirnor(morphed_glohor, longitude, latitude, utc_offset):
     """
     solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset)
     hours = morph_utils.ts_8760()
-    return pvlib.irradiance.dirint(morphed_glohor, solar_df['zenith'], hours)
+    solar_df['glorhorrad_Whm2'] = morphed_glohor
+    solar_df['diffhorrad_Whm2'] = morphed_diffhor
+
+
+    def calc_dirnor_sinrule(ghr, dhr, solar_alt):
+        return ghr - dhr / (math.sin(solar_alt))
+
+    return solar_df.apply(lambda x: calc_dirnor_sinrule(x['glorhorrad_Whm2'], x['diffhorrad_Whm2'], x['elevation']),axis=1)
+    # return pvlib.irradiance.dirint(morphed_glohor, solar_df['zenith'].values, hours)
 
 
 
@@ -491,5 +546,5 @@ def calc_osc(morphed_tsc, present_osc, present_tsc):
         a pandas Series of the same shape as present day input
     """
     osc_tsc_ratio = np.divide(present_osc, present_tsc, out=np.zeros_like(present_osc), where=present_tsc != 0)
-    return np.where(osc_tsc_ratio * morphed_tsc)
+    return round(osc_tsc_ratio * morphed_tsc, 2).rename("opaqskycvr_tenths")
 

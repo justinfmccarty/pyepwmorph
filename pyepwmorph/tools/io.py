@@ -121,7 +121,7 @@ class Epw():
     def _read_location(self):
         location_line = self.string[0].replace("\n", "").split(",")
         location_keys = ['title', 'site', 'province', 'country_code', 'type',
-                         'usaf', 'longitude', 'latitude', 'utc_offset', 'elevation']
+                         'usaf', 'latitude', 'longitude', 'utc_offset', 'elevation']
         location_dict = dict(zip(location_keys, location_line))
         location_dict['longitude'] = float(location_dict['longitude'])
         location_dict['latitude'] = float(location_dict['latitude'])

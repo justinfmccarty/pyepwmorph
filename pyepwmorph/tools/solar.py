@@ -317,9 +317,9 @@ def persistence(hourly_clearness, sunrise_sunset):
         persistence array
     """
     df = pd.DataFrame({"row_number": range(0, 8760),
-                       "hourly_clearness": hourly_clearness,
+                       # "hourly_clearness": hourly_clearness,
                        "sunrise_sunset": sunrise_sunset})
-    df['persistence'] = df.apply(lambda x: persistence_sunrise_sunset(x['hourly_clearness'],
+    df['persistence'] = df.apply(lambda x: persistence_sunrise_sunset(hourly_clearness,
                                                                       x['sunrise_sunset'],
                                                                       x['row_number']),
                                  axis=1)
