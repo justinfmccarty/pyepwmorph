@@ -7,7 +7,7 @@ include = ["pyepwmorph/*"]
 
 [project]
 name = "pyepwmorph"
-version = "0.4.1"
+version = "0.4.2"
 authors = [
   { name="Justin McCarty", email="mccarty.justin.f@gmail.com" },
 ]
@@ -30,7 +30,7 @@ dependencies = [
     'lz4 == 4.3.2',
     'meteocalc == 1.1.0',
     'pvlib == 0.10.1',
-    'pyarrow == 13.0.0',
+    'pyarrow == 14.1.0',
     'skyfield == 1.46',
     'timezonefinder == 6.2.0',
     'xclim == 0.44.0',
