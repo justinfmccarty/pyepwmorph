@@ -7,10 +7,13 @@ The second task is dealt with throughout the following scripts
 """
 import copy
 import datetime
+import os
 
 from pyepwmorph.models import access, coordinate, assemble
 from pyepwmorph.morph import procedures
 from pyepwmorph.tools import io as morph_io
+from pyepwmorph.tools import utilities as morph_utils
+from pyepwmorph.tools import configuration as morph_config
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -42,8 +45,8 @@ def compile_climate_model_data(model_sources, pathway, variable, longitude, lati
         longitude (-180 to 180)
     latitude : float
         latitude (-180 to 180)
-    percentiles : list
-        percentiles from which to slice the ensemble of data
+    percentiles : list of ints
+        percentiles from which to slice the ensemble of data such as [10,50] or [95]
 
     Returns
     -------
@@ -192,6 +195,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                 else:
                     # TODO add a catch here if the tas, tasmax, tasmin, and pressure variables have not been downlaoded yet
                     # download them here so no error arises
+
 
                     # morph temp
                     tas_climatologies = assemble.calc_model_climatologies(baseline_range, future_range,
@@ -343,7 +347,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
             morphed_dict['windspd_ms'] = morphed_wspd
 
         elif variable == 'Clouds and Radiation':
-            # do morphing for glohor, diffhor, dirnor, tsc, osc
+            # do morphing for glohor, difhor, dirnor, tsc, osc
             longitude = epw_object.location['longitude']
             latitude = epw_object.location['latitude']
             utc_offset = epw_object.location['utc_offset']
@@ -364,12 +368,12 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
             morphed_dict['glohorrad_Whm2'] = morphed_glohor
 
             present_exthor = epw_object.dataframe['exthorrad_Whm2']
-            morphed_diffhor = procedures.calc_diffhor(longitude, latitude, utc_offset,
+            morphed_difhor = procedures.calc_difhor(longitude, latitude, utc_offset,
                                                       morphed_glohor, present_exthor
                                                       ).values
-            morphed_dict['diffhorrad_Whm2'] = morphed_diffhor
+            morphed_dict['difhorrad_Whm2'] = morphed_difhor
             morphed_dirnor = procedures.calc_dirnor(morphed_glohor,
-                                                    morphed_diffhor,
+                                                    morphed_difhor,
                                                     longitude, latitude, utc_offset
                                                     ).values
             morphed_dict['dirnorrad_Whm2'] = morphed_dirnor
@@ -392,8 +396,47 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
         epw_object.dataframe[k] = v
         if n == 0:
             epw_object.headers['COMMENTS 2'][
-                0] += f'morphed for {pathway} ({future_range}) with pyepwmorph on {datetime.datetime.now().isoformat()}: {k},'
+                0] += f' morphed for {pathway} ({future_range}) with pyepwmorph on {datetime.datetime.now().isoformat()}: {k},'
         else:
             epw_object.headers['COMMENTS 2'][0] += f'{k},'
 
     return epw_object
+
+
+def morphing_workflow(project_name, epw_file, user_variables, user_pathways, percentiles, future_years, output_directory, model_sources=None, baseline_range=None, write_file=True):
+    config_object = morph_config.MorphConfig(project_name, epw_file, user_variables, user_pathways, percentiles,
+                                             future_years, output_directory, model_sources=model_sources, baseline_range=baseline_range)
+
+    result_data = {}
+
+    # get climate model data
+    year_model_dict = iterate_compile_model_data(config_object.model_pathways,
+                                                                 config_object.model_variables,
+                                                                 config_object.model_sources,
+                                                                 config_object.epw.location['longitude'],
+                                                                 config_object.epw.location['latitude'],
+                                                                 config_object.percentiles)
+    for fut_year in config_object.future_years:
+        fut_key = str(fut_year)
+        result_data[fut_key] = {}
+        future_range = morph_utils.calc_period(int(fut_year), config_object.baseline_range)
+        for pathway in [pathway for pathway in config_object.model_pathways if pathway != "historical"]:
+            result_data[fut_key][pathway] = {}
+            for percentile in config_object.percentiles:
+                percentile_key = str(percentile)
+                morphed_data = morph_epw(config_object.epw,
+                                                         config_object.user_variables,
+                                                         config_object.baseline_range,
+                                                         future_range,
+                                                         year_model_dict,
+                                                         pathway,
+                                                         percentile)
+                morphed_data.dataframe['year'] = int(fut_year)
+                result_data[fut_key][pathway][percentile_key] = morphed_data
+                if write_file==True:
+                    morphed_data.write_to_file(os.path.join(config_object.output_directory,
+                                                            f"{fut_key}_{pathway}_{percentile_key}.epw"))
+
+
+
+    return result_data

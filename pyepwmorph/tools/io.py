@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import csv
+import os
 import re
 import datetime
 import numpy as np
@@ -201,9 +202,11 @@ class Epw():
         df = pd.read_csv(self.fp,
                          skiprows=first_row,
                          header=None,
+                         # index_col=False,
                          names=names)
-
+        # df.reset_index(drop=True, inplace=True)
         df.set_index(morph_utils.ts_8760(year=datetime.datetime.now().year), inplace=True)
+        df['year'] = datetime.datetime.now().year
         self.dataframe = df
 
     def _first_row_with_climate_data(self):
@@ -260,7 +263,14 @@ class Epw():
         #         csvwriter.writerow([k] + v)
         #     for row in self.dataframe.itertuples(index=False):
         #         csvwriter.writerow(i for i in row)
-        #
+        directory_path = os.path.dirname(fp)
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path)
+            print(f"Directory created: {directory_path}")
+        else:
+            # print(f"Directory already exists: {directory_path}")
+            pass
+
         with open(fp, "w") as fp:
             fp.write(self.make_epw_string())
 

@@ -1,0 +1,9 @@
+8 July 24
+- Look at integrating into CEA weather helper
+- fix the errors from poor connection
+- correct the pressure problem (added supporting variables)
+- make a better tutorial
+- clean up the UI and the print statement so people understand that it is working
+- fix the extra column problem from the solar radiation morph (was a misspelling of difhor using two "f"s)
+
+- changed publish to follow https://medium.com/@blackary/publishing-a-python-package-from-github-to-pypi-in-2024-a6fb8635d45d

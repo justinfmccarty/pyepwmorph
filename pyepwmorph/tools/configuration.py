@@ -67,7 +67,7 @@ class MorphConfig(object):
 
     def assign_model_variables(self):
         """
-        assigns the objects model variables that are used to downlaod the correct cliamte model data from the
+        assigns the objects model variables that are used to download the correct climate model data from the
             input variable options
         """
 
@@ -77,6 +77,17 @@ class MorphConfig(object):
                 self.model_variables += ['tas', 'tasmax', 'tasmin']
             elif user_var == 'Humidity':
                 self.model_variables += ['huss']
+                if ('Temperature' in self.user_variables) and ('Pressure' in self.user_variables):
+                    pass
+                elif ('Temperature' in self.user_variables) and ('Pressure' not in self.user_variables):
+                    print('Humidity requires the morphing of Temperature and Pressure. Adding Pressure')
+                    self.model_variables += ['psl']
+                elif ('Temperature' not in self.user_variables) and ('Pressure' in self.user_variables):
+                    print('Humidity requires the morphing of Temperature and Pressure. Adding Temperature')
+                    self.model_variables += ['tas', 'tasmax', 'tasmin']
+                elif ('Temperature' not in self.user_variables) and ('Pressure' not in self.user_variables):
+                    print('Humidity requires the morphing of Temperature and Pressure. Adding both')
+                    self.model_variables += ['tas', 'tasmax', 'tasmin', 'psl']
             elif user_var == 'Pressure':
                 self.model_variables += ['psl']
             elif user_var == 'Wind':
@@ -97,11 +108,12 @@ class MorphConfig(object):
                     self.model_variables += ['tas', 'tasmax', 'tasmin', 'huss']
             else:
                 pass
+        print(self.model_variables)
         self.model_variables = list(set(self.model_variables))
 
     def assign_model_pathways(self):
         """
-        assigns the objects model pathways that are used to downlaod the correct climate model data from the
+        assigns the objects model pathways that are used to download the correct climate model data from the
             input pathway options
         """
 

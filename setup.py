@@ -2,7 +2,7 @@ from distutils.core import setup
 setup(
   name = 'pyepwmorph',         # How you named your package folder (MyLib)
   packages = ['pyepwmorph','pyepwmorph.models','pyepwmorph.morph','pyepwmorph.tools'],
-  version = '0.3.1',      # Start with a small number and increase it with every change you make
+  version = '0.4.0',      # Start with a small number and increase it with every change you make
   license='GPLv3',        # Chose a license from here: https://help.github.com/articles/licensing-a-repository
   description = 'A python package to enable simple and easy gathering of climate model data and morphing of EPW files',   # Give a short description about your library
   author = 'Justin McCarty',                   # Type in your name

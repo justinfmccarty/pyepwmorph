@@ -388,7 +388,7 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
     return round(morphed_glohor, 2).rename("glohorrad_Whm2")
 
 
-def calc_diffhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor):
+def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor):
     """
     Diffuse horizontal radiation morph is a recalculation based on the morphed global horiztonal and the
         persistence method [1] from clearness
@@ -439,16 +439,16 @@ def calc_diffhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor
 
     # calc persistence
     solar_df['persistence'] = morph_solar_utils.persistence(hourly_clearness, sunrise_sunset_idx)
-    morphed_diffhor = solar_df.apply(
+    morphed_difhor = solar_df.apply(
         lambda x: x['glohorrad_Whm2'] * (1 / (1 + math.exp(-5.38 + 6.63 * x['hourly_clearness'] +
                                                            0.006 * x['local_solar_time'] - 0.007 *
                                                            x['solar_alt'] + 1.75 * x['daily_clearness'] +
                                                            1.31 * x['persistence']))), axis=1).fillna(0).astype(int)
 
-    return round(morphed_diffhor, 2).rename('diffhorrad_Whm2')
+    return round(morphed_difhor, 2).rename('difhorrad_Whm2')
 
 
-def calc_dirnor(morphed_glohor, morphed_diffhor, longitude, latitude, utc_offset):
+def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset):
     """
     Direct normal radiation morph is a recalculation based on the morphed global horizontal
         essentially a wrapper around pvlib's method
@@ -475,13 +475,13 @@ def calc_dirnor(morphed_glohor, morphed_diffhor, longitude, latitude, utc_offset
     solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset)
     hours = morph_utils.ts_8760()
     solar_df['glorhorrad_Whm2'] = morphed_glohor
-    solar_df['diffhorrad_Whm2'] = morphed_diffhor
+    solar_df['difhorrad_Whm2'] = morphed_difhor
 
 
     def calc_dirnor_sinrule(ghr, dhr, solar_alt):
         return ghr - dhr / (math.sin(solar_alt))
 
-    return solar_df.apply(lambda x: calc_dirnor_sinrule(x['glorhorrad_Whm2'], x['diffhorrad_Whm2'], x['elevation']),axis=1)
+    return solar_df.apply(lambda x: calc_dirnor_sinrule(x['glorhorrad_Whm2'], x['difhorrad_Whm2'], x['elevation']),axis=1)
     # return pvlib.irradiance.dirint(morphed_glohor, solar_df['zenith'].values, hours)
 
 
