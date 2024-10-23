@@ -7,7 +7,7 @@ include = ["pyepwmorph/*"]
 
 [project]
 name = "pyepwmorph"
-version = "0.4.6"
+version = "0.4.7"
 authors = [
   { name="Justin McCarty", email="mccarty.justin.f@gmail.com" },
 ]
