@@ -478,7 +478,8 @@ def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset)
 
 
     def calc_dirnor_sinrule(ghr, dhr, solar_alt):
-        return ghr - dhr / (math.sin(solar_alt))
+        solar_alt_radians = math.radians(solar_alt)
+        return ghr - dhr / (math.sin(solar_alt_radians))
 
     return solar_df.apply(lambda x: calc_dirnor_sinrule(x['glorhorrad_Whm2'], x['difhorrad_Whm2'], x['elevation']),axis=1)
     # return pvlib.irradiance.dirint(morphed_glohor, solar_df['zenith'].values, hours)
