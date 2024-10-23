@@ -6,4 +6,5 @@
 - clean up the UI and the print statement so people understand that it is working
 - fix the extra column problem from the solar radiation morph (was a misspelling of difhor using two "f"s)
 
-- changed publish to follow https://medium.com/@blackary/publishing-a-python-package-from-github-to-pypi-in-2024-a6fb8635d45d
+- changed release mode. Now the .toml file just needs to be updated ot the next release version, the changes need to be brought to main,
+    and a new release needs to be made in github so the action can run.

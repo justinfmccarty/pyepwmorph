@@ -109,7 +109,7 @@ def solar_geometry(longitude, latitude, utc_offset):
 
     # use timezonefinder to get the local timezone at the lat and long
     tz = TimezoneFinder().timezone_at(lng=longitude, lat=latitude)
-    times = pd.date_range('2019-01-01 00:00:00', periods=8760, freq='H', tz=tz)
+    times = pd.date_range('2019-01-01 00:00:00', periods=8760, freq='h', tz=tz)
 
     # leverage pvlib to build the basic solar position dataframe
     solar_df = pvlib.solarposition.get_solarposition(times, latitude, longitude)

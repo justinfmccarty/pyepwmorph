@@ -427,12 +427,11 @@ def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor)
     solar_df['solar_alt'] = solar_df.apply(lambda x: morph_solar_utils.calc_solar_alt(x['zenith']),
                                            axis=1)
     solar_df['glohorrad_Whm2'] = morphed_glohor
-    solar_df['glohorrad_Whm2'] = morphed_glohor
 
     # calc clearness from morphed glohor
     hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(morphed_glohor, present_exthor)
     solar_df['hourly_clearness'] = hourly_clearness
-    solar_df['daily_clearness'] = daily_clearness
+    solar_df['daily_clearness'] = solar_df['doy'].map(lambda x: daily_clearness[x]).values
 
     # getun sunrise and sunset for persistence
     sunrise_sunset_idx = morph_solar_utils.build_sunrise_sunset(longitude, latitude)
