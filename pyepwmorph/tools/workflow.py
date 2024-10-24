@@ -372,8 +372,10 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                       morphed_glohor, present_exthor
                                                       ).values
             morphed_dict['difhorrad_Whm2'] = morphed_difhor
+            present_dirnor = epw_object.dataframe['dirnorrad_Whm2']
             morphed_dirnor = procedures.calc_dirnor(morphed_glohor,
                                                     morphed_difhor,
+                                                    present_dirnor,
                                                     longitude, latitude, utc_offset
                                                     ).values
             morphed_dict['dirnorrad_Whm2'] = morphed_dirnor
