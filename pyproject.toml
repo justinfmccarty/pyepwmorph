@@ -12,7 +12,7 @@ authors = [
   { name="Justin McCarty", email="mccarty.justin.f@gmail.com" },
 ]
 description = "A python package to enable simple and easy gathering of climate model data and morphing of EPW files"
-license = "GPL-3.0-or-later"
+license = {text = "GPL-3.0-or-later"}
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
