@@ -6,7 +6,11 @@ these scripts provide help to coordinate them into a standard system before bein
 import xarray as xr
 import warnings
 import dask
+import time
 import pandas as pd
+
+from pyepwmorph.tools import cache
+
 warnings.filterwarnings("ignore")
 
 __author__ = "Justin McCarty"
@@ -42,10 +46,34 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
         a dictionary of xarray datasets keyed by their name from the input dict
 
     """
+    
+    # Extract source IDs for cache key
+    source_ids = list(dset_dict.keys())
+    # Extract just the model names from the full key names (e.g., 'CMIP.ACCESS.ACCESS-CM2.ssp126.Amon.gn' -> 'ACCESS-CM2')
+    model_names = []
+    for source_id in source_ids:
+        parts = source_id.split('.')
+        if len(parts) >= 3:
+            model_names.append(parts[2])  # Model name is typically the 3rd part
+        else:
+            model_names.append(source_id)  # Fallback to full key if unexpected format
+    
+    # Check cache first
+    cached_data = cache.get_cached_coordinate_data(
+        latitude=latitude,
+        longitude=longitude,
+        pathway=pathway,
+        variable=variable,
+        source_id=model_names
+    )
+    
+    if cached_data is not None:
+        return cached_data
 
     # set the blank dict for the datasets to be placed in keyed by source_id
     ds_dict = {}
     for name, ds in dset_dict.items():
+        start_time = time.time()
         # rename spatial dimensions if necessary
         if ('longitude' in ds.dims) and ('latitude' in ds.dims):
             ds = ds.rename({'longitude': 'lon', 'latitude': 'lat'})  # some models labelled dimensions differently...
@@ -85,7 +113,21 @@ def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
                 ds[variable] = ds[variable].sel({f'{d}': 0}, drop=True)
 
         ds_dict[name] = ds
-
+        end_time = time.time()
+    # print("Start Compute")
+    # start_time = time.time()
     datasets = dask.compute(ds_dict)[0]
+    # end_time = time.time()
+    # print(f"Compute Time: {end_time - start_time:.2f} seconds")
+
+    # Save to cache before returning
+    cache.save_coordinate_to_cache(
+        data=datasets,
+        latitude=latitude,
+        longitude=longitude,
+        pathway=pathway,
+        variable=variable,
+        source_id=model_names
+    )
 
     return datasets

@@ -28,14 +28,24 @@ class MorphConfig(object):
 
     def __init__(self, project_name, epw_fp, user_variables, user_pathways, percentiles, future_years,
                  output_directory, model_sources=None, baseline_range=None):
+        
         if model_sources is None:
             model_sources = ['ACCESS-CM2', 'CanESM5', 'TaiESM1']
         self.project_name = project_name
         self.epw = morpher_io.Epw(epw_fp)
         self.model_sources = model_sources
         self.user_variables = user_variables
-        self.user_pathways = user_pathways
-        self.percentiles = percentiles
+        
+        if isinstance(user_pathways, list):
+            self.user_pathways = user_pathways
+        else:
+            self.user_pathways = [user_pathways]
+        
+        if isinstance(percentiles, list):
+            self.percentiles = percentiles
+        else:
+            self.percentiles = [percentiles]
+            
         self.location = {'latitude': None,
                          'longitude': None,
                          'elevation': None,
@@ -57,7 +67,7 @@ class MorphConfig(object):
         self.assign_model_pathways()
 
     def assign_from_epw(self):
-
+        
         self.location['latitude'] = self.epw.location['latitude']
         self.location['longitude'] = self.epw.location['longitude']
         self.location['elevation'] = self.epw.location['elevation']
@@ -71,45 +81,42 @@ class MorphConfig(object):
             input variable options
         """
 
-        self.model_variables = []
+        # Define variable mappings and dependencies
+        variable_mapping = {
+            'Temperature': ['tas', 'tasmax', 'tasmin'],
+            'Humidity': ['huss'],
+            'Pressure': ['psl'],
+            'Wind': ['uas', 'vas'],
+            'Clouds and Radiation': ['clt', 'rsds']
+        }
+        
+        # Variables that require additional dependencies
+        dependencies = {
+            'Humidity': ['Temperature', 'Pressure'],
+            'Dew Point': ['Temperature', 'Humidity', 'Pressure']
+        }
+
+        # Start with user variables and add dependencies
+        all_required_vars = set(self.user_variables)
+        
+        # Check for dependencies and add missing ones
         for user_var in self.user_variables:
-            if user_var == 'Temperature':
-                self.model_variables += ['tas', 'tasmax', 'tasmin']
-            elif user_var == 'Humidity':
-                self.model_variables += ['huss']
-                if ('Temperature' in self.user_variables) and ('Pressure' in self.user_variables):
-                    pass
-                elif ('Temperature' in self.user_variables) and ('Pressure' not in self.user_variables):
-                    print('Humidity requires the morphing of Temperature and Pressure. Adding Pressure')
-                    self.model_variables += ['psl']
-                elif ('Temperature' not in self.user_variables) and ('Pressure' in self.user_variables):
-                    print('Humidity requires the morphing of Temperature and Pressure. Adding Temperature')
-                    self.model_variables += ['tas', 'tasmax', 'tasmin']
-                elif ('Temperature' not in self.user_variables) and ('Pressure' not in self.user_variables):
-                    print('Humidity requires the morphing of Temperature and Pressure. Adding both')
-                    self.model_variables += ['tas', 'tasmax', 'tasmin', 'psl']
-            elif user_var == 'Pressure':
-                self.model_variables += ['psl']
-            elif user_var == 'Wind':
-                self.model_variables += ['uas', 'vas']
-            elif user_var == 'Clouds and Radiation':
-                self.model_variables += ['clt', 'rsds']
-            elif user_var == 'Dew Point':
-                if ('Temperature' in self.user_variables) and ('Humidity' in self.user_variables):
-                    pass
-                elif ('Temperature' in self.user_variables) and ('Humidity' not in self.user_variables):
-                    print('Dew Point requires the morphing of Temperature and Humidity. Adding Humidity')
-                    self.model_variables += ['huss']
-                elif ('Temperature' not in self.user_variables) and ('Humidity' in self.user_variables):
-                    print('Dew Point requires the morphing of Temperature and Humidity. Adding Temperature')
-                    self.model_variables += ['tas', 'tasmax', 'tasmin']
-                elif ('Temperature' not in self.user_variables) and ('Humidity' not in self.user_variables):
-                    print('Dew Point requires the morphing of Temperature and Humidity. Adding both')
-                    self.model_variables += ['tas', 'tasmax', 'tasmin', 'huss']
-            else:
-                pass
-        print(self.model_variables)
+            if user_var in dependencies:
+                missing_deps = set(dependencies[user_var]) - set(self.user_variables)
+                if missing_deps:
+                    dep_list = ', '.join(missing_deps)
+                    print(f'{user_var} requires the morphing of {dep_list}. Adding {dep_list}')
+                    all_required_vars.update(missing_deps)
+
+        # Convert to model variables
+        self.model_variables = []
+        for var in all_required_vars:
+            if var in variable_mapping:
+                self.model_variables.extend(variable_mapping[var])
+        
+        # Remove duplicates
         self.model_variables = list(set(self.model_variables))
+        print(self.model_variables)
 
     def assign_model_pathways(self):
         """
@@ -123,6 +130,8 @@ class MorphConfig(object):
                 self.model_pathways += ['historical', 'ssp126']
             elif user_path == 'Middle of the Road':
                 self.model_pathways += ['historical', 'ssp245']
+            elif user_path == 'Upper Middle Scenario':
+                self.model_pathways += ['historical', 'ssp370']
             elif user_path == 'Worst Case Scenario':
                 self.model_pathways += ['historical', 'ssp585']
             else:

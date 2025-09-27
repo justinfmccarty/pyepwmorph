@@ -9,6 +9,8 @@ import pandas as pd
 import calendar
 import warnings
 
+import intake
+
 warnings.filterwarnings("ignore")
 
 __author__ = "Justin McCarty"
@@ -284,7 +286,51 @@ def ts_8760(year=2023, tz=None):
 def calc_period(year, period):
     extent = int(period[1]) - int(period[0])
     return int(year - (extent/2)), int(year + (extent/2))
-#
+
+
+def available_models():
+    esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")
+    esm_data_df = esm_data.df
+    
+    scenarios = ['ssp126', 'ssp245', 'ssp370', 'ssp585']
+
+    variables_needed = ['tas','tasmax','tasmin','clt','psl','pr','huss','vas','uas','rsds']
+
+    result_dict = {}
+
+    for scenario in scenarios:
+        # print(f"Scenario: {scenario}")
+        result_dict[scenario] = []
+        esm_data_df_sub_scenario = esm_data_df[esm_data_df['experiment_id'] == scenario]
+        sources = esm_data_df_sub_scenario['source_id'].unique()
+        for source in sources:
+            # count = len(esm_data_df[(esm_data_df['experiment_id'] == scenario) & (esm_data_df['source_id'] == source)])
+            # if count > 0:
+            #     print(f"  Source: {source}, Count: {count}")
+
+            matching_data = esm_data_df[(esm_data_df['activity_id']=='ScenarioMIP') & (esm_data_df['experiment_id']==scenario) 
+                                    & (esm_data_df['member_id']=='r1i1p1f1') & (esm_data_df['table_id']=='Amon')
+                                    & (esm_data_df['source_id']==source)]
+            grid_type = matching_data['grid_label'].unique()
+            variables = matching_data['variable_id'].unique()
+            if all(item in variables for item in variables_needed):
+                # print(f"  Source: {source}, Grid types: {grid_type}")
+                result_dict[scenario].append(source)
+                
+    # Convert lists to sets for each scenario
+    model_sets = [set(result_dict[scenario]) for scenario in scenarios]
+
+    # Find the intersection of all sets using set.intersection(*sets)
+    common_models = set.intersection(*model_sets)
+
+    print(f"Models common across all scenarios ({len(common_models)}):")
+    for model in sorted(common_models):
+        print(f"- {model}")
+        
+    return list(common_models)
+
+
+
 # def saturation_vapor_pressure(present_dbt):
 #     """Saturated vapor pressure (Pa) at a given dry bulb temperature (K).
 #
@@ -407,3 +453,4 @@ def calc_period(year, period):
 #             break  # 100 is the max iterations (usually only 3-5 are needed)
 #         index = index + 1
 #     return wb_temp
+

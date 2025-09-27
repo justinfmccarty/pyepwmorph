@@ -74,7 +74,7 @@ def iterate_compile_model_data(pathways, variables, model_sources, longitude, la
     Parameters
     ----------
     pathways : list
-        the pathways to cycle through
+        the pathways to cycle through ['historical','ssp126','ssp245', 'ssp370,'ssp585']
     variables : list
         the model variables to cycle through
     model_sources : list
@@ -193,10 +193,6 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                              relhum_climatologies[1], relhum_climatologies[0]
                                                              ).values
                 else:
-                    # TODO add a catch here if the tas, tasmax, tasmin, and pressure variables have not been downlaoded yet
-                    # download them here so no error arises
-
-
                     # morph temp
                     tas_climatologies = assemble.calc_model_climatologies(baseline_range, future_range,
                                                                           model_data_dict['historical']['tas'][
@@ -276,6 +272,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                         tmax_climatologies[1], tmax_climatologies[0],
                                                         tmin_climatologies[1], tmin_climatologies[0]
                                                         ).values
+                morphed_dict['drybulb_C'] = morphed_dbt
 
                 # morph relhum
                 relhum_climatologies = assemble.calc_model_climatologies(baseline_range, future_range,
@@ -307,11 +304,7 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
                                                          present_psl, present_dbt, morphed_psl, morphed_dbt,
                                                          relhum_climatologies[1], relhum_climatologies[0]
                                                          ).values
-                if "Temperature" in user_variables:
-                    morphed_dict['drybulb_C'] = morphed_dbt
-
-                if "Humidity" in user_variables:
-                    morphed_dict['relhum_percent'] = morphed_relhum
+                morphed_dict['relhum_percent'] = morphed_relhum
 
 
                 morphed_dewpt = procedures.morph_dewpt(morphed_dict['drybulb_C'], morphed_dict['relhum_percent'])
@@ -405,19 +398,21 @@ def morph_epw(epw_file, user_variables, baseline_range, future_range, model_data
     return epw_object
 
 
-def morphing_workflow(project_name, epw_file, user_variables, user_pathways, percentiles, future_years, output_directory, model_sources=None, baseline_range=None, write_file=True):
+def morphing_workflow(project_name, epw_file, user_variables, user_pathways, percentiles, future_years, 
+                      output_directory, model_sources=None, baseline_range=None, write_file=True):
+    
     config_object = morph_config.MorphConfig(project_name, epw_file, user_variables, user_pathways, percentiles,
-                                             future_years, output_directory, model_sources=model_sources, baseline_range=baseline_range)
+                                            future_years, output_directory, model_sources=model_sources, baseline_range=baseline_range)
 
     result_data = {}
 
     # get climate model data
     year_model_dict = iterate_compile_model_data(config_object.model_pathways,
-                                                                 config_object.model_variables,
-                                                                 config_object.model_sources,
-                                                                 config_object.epw.location['longitude'],
-                                                                 config_object.epw.location['latitude'],
-                                                                 config_object.percentiles)
+                                                config_object.model_variables,
+                                                config_object.model_sources,
+                                                config_object.epw.location['longitude'],
+                                                config_object.epw.location['latitude'],
+                                                config_object.percentiles)
     for fut_year in config_object.future_years:
         fut_key = str(fut_year)
         result_data[fut_key] = {}
