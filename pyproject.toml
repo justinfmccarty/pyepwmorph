@@ -37,6 +37,18 @@ dependencies = [
     'xclim == 0.44.0',
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "bump2version>=1.0",
+    "build>=0.10",
+    "twine>=4.0",
+    "black>=23.0",
+    "isort>=5.0",
+    "flake8>=6.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/justinfmccarty/pyepwmorph"
 Issues = "https://github.com/justinfmccarty/pyepwmorph/issues"
