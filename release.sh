@@ -8,8 +8,10 @@ set -e
 BUMP_TYPE=${1:-patch}
 
 echo "🔍 Checking git status..."
-if [ -n "$(git status --porcelain)" ]; then
-    echo "❌ Working directory is not clean. Please commit or stash your changes."
+# Check for tracked files that are modified (ignore untracked files like dist/)
+if [ -n "$(git status --porcelain | grep -E '^[AMD]')" ]; then
+    echo "❌ Working directory has uncommitted changes. Please commit your changes."
+    git status --porcelain | grep -E '^[AMD]'
     exit 1
 fi
 
