@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
     'bokeh == 3.2.2',
-    'build == 1.2.1',
     'dask == 2023.8.1',
     'distributed == 2023.8.1',
     'gcsfs == 2023.6.0',
