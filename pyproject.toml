@@ -7,7 +7,7 @@ include = ["pyepwmorph/*"]
 
 [project]
 name = "pyepwmorph"
-version = "1.0.5"
+version = "1.1.0"
 authors = [
   { name="Justin McCarty", email="mccarty.justin.f@gmail.com" },
 ]
@@ -50,7 +50,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-
 # Development dependencies
 dev = [
     'ipykernel>=6.20.0',
