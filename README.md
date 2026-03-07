@@ -1,311 +1,181 @@
 # pyepwmorph
 
-A Python package for accessing global climate models and morphing EnergyPlus Weather (EPW) files with future climate projections from CMIP6 models.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Version](https://img.shields.io/badge/version-2.0.0-green.svg)](https://github.com/justinfmccarty/pyepwmorph)
 
-## 🌡️ Overview
+A Python package for morphing EnergyPlus Weather (EPW) files with climate model data. Supports CMIP6 projections from Google Cloud and custom CSV-based model data for both future and historical scenarios.
 
-`pyepwmorph` enables building performance analysts and researchers to create future weather files by morphing existing EPW files with climate change projections. The package automatically downloads climate model data from Google Cloud and applies scientifically-validated morphing procedures to generate future weather files for building energy simulations.
+## Overview
 
-## ✨ Features
+`pyepwmorph` enables building performance analysts and researchers to create morphed weather files by applying scientifically validated procedures (Belcher et al. 2005, Jentsch et al. 2013) to existing EPW files. The package can morph EPWs using:
 
-- **Automated Climate Data Access**: Downloads CMIP6 climate model data from Google Cloud Storage
-- **Multiple Climate Scenarios**: Supports 4 different Representative Concentration Pathways (RCPs) and Shared Socioeconomic Pathways (SSPs)
-- **Intelligent Caching**: Built-in caching system to improve performance and reduce download times
-- **Morphing Procedures**: Implements established morphing methodologies for temperature, humidity, wind, solar radiation, and other weather variables
-- **Multiple Models**: Access to 50+ global climate models for robust projections
-- **Easy-to-Use API**: Simple Python interface for weather file generation
+- **CMIP6 data** fetched automatically from Google Cloud (Pangeo)
+- **Custom CSV data** from any climate model, including historical reconstructions
 
-## 🚀 Installation
+## Installation
+
+### With uv (recommended)
+
+```bash
+uv add pyepwmorph
+```
+
+### Development setup
+
+```bash
+git clone https://github.com/justinfmccarty/pyepwmorph.git
+cd pyepwmorph
+uv sync --extra dev
+```
+
+### With pip
 
 ```bash
 pip install pyepwmorph
 ```
 
-### Development Installation
+## Quick start
 
-For development or to access the latest features:
-
-```bash
-# Clone the repository
-git clone https://github.com/justinfmccarty/pyepwmorph.git
-cd pyepwmorph
-
-# Create conda environment (recommended)
-conda env create -f environment.yml
-conda activate pyepwmorph
-
-# Or install in development mode
-pip install -e ".[dev]"
-```
-
-## 🌍 Climate Scenarios
-
-The package supports four main climate scenarios based on CMIP6 projections:
-
-### Available Scenarios
-
-| Scenario | Full Name | Description | Expected Warming |
-|----------|-----------|-------------|------------------|
-| **ssp126** | Best Case Scenario | Strong mitigation, renewable transition | 1.8°C by 2100 |
-| **ssp245** | Middle of the Road | Moderate mitigation efforts | 2.7°C by 2100 |
-| **ssp370** | Upper Middle Scenario | Regional rivalry, slow convergence | 3.6°C by 2100 |
-| **ssp585** | Worst Case Scenario | Fossil-fueled development | 4.4°C by 2100 |
-
-### Percentiles
-
-For each scenario, you can access different percentiles representing uncertainty ranges:
-
-- **1st percentile**: Lower bound of projections (cooler outcomes)
-- **50th percentile**: Median projection (most likely outcome)  
-- **99th percentile**: Upper bound of projections (warmer outcomes)
-
-## 📊 Morphing Variables
-
-The package can morph the following weather variables:
-
-- **Temperature**: Dry bulb temperature, daily min/max temperatures
-- **Humidity**: Relative humidity, absolute humidity, dew point
-- **Pressure**: Atmospheric pressure
-- **Wind**: Wind speed and direction
-- **Clouds and Radiation**: Cloud cover, solar radiation (direct and diffuse)
-
-## 💾 Caching System
-
-`pyepwmorph` includes an intelligent caching system to improve performance:
-
-### Automatic Caching
-
-- Climate model data is automatically cached locally
-- Coordinate data for specific locations is cached
-- Reduces download time for repeated analyses
-
-### Cache Management Commands
-
-```python
-import pyepwmorph.models.access as access
-
-# Get cache statistics
-stats = access.get_cmip6_cache_stats()
-print(f"Cache size: {stats['total_size_mb']} MB")
-print(f"Files cached: {stats['total_files']}")
-
-# Clear cache (useful for development or disk space management)
-access.clear_cmip6_cache()
-```
-
-### Cache Configuration
-
-- Default cache location: `~/.pyepwmorph_cache/`
-- Automatic cleanup when cache exceeds size limits
-- Thread-safe caching for concurrent operations
-
-## 🏗️ Quick Start
-
-### Basic Usage
+### CMIP6 workflow (future projections)
 
 ```python
 import pyepwmorph.tools.workflow as workflow
 
-# Define morphing parameters
-project_name = "MyBuilding_Future"
-epw_file = "path/to/your/weather_file.epw"
-user_variables = ['Temperature', 'Humidity', 'Clouds and Radiation']
-user_pathways = ['Middle of the Road']  # ssp245
-percentiles = [50]  # median projection
-future_years = [2050]
-output_directory = "path/to/output/"
-
-# Run morphing workflow
 results = workflow.morphing_workflow(
-    project_name=project_name,
-    epw_file=epw_file,
-    user_variables=user_variables,
-    user_pathways=user_pathways,
-    percentiles=percentiles,
-    future_years=future_years,
-    output_directory=output_directory
+    project_name="MyBuilding_Future",
+    epw_file="weather.epw",
+    user_variables=["Temperature", "Humidity", "Clouds and Radiation"],
+    user_pathways=["Middle of the Road"],   # ssp245
+    percentiles=[50],
+    target_years=[2050],
+    output_directory="output/",
 )
 ```
 
-### Advanced Configuration
+### Custom CSV workflow (historical or any model)
 
 ```python
-# Use specific climate models (optional)
-model_sources = ['ACCESS-CM2', 'CanESM5', 'MIROC6']
+import pyepwmorph.tools.workflow as workflow
 
-# Custom baseline period (default: 1995-2014)
-baseline_range = [1990, 2019]
-
-# Multiple scenarios and percentiles
-user_pathways = ['Best Case Scenario', 'Middle of the Road', 'Worst Case Scenario']
-percentiles = [1, 50, 99]
-future_years = [2030, 2050, 2070]
+custom_data = {
+    "reference": {
+        "tas": "data/reference_tas.csv",
+        "tasmax": "data/reference_tasmax.csv",
+        "tasmin": "data/reference_tasmin.csv",
+    },
+    "target_1990s": {
+        "tas": "data/target_tas.csv",
+        "tasmax": "data/target_tasmax.csv",
+        "tasmin": "data/target_tasmin.csv",
+    },
+}
 
 results = workflow.morphing_workflow(
-    project_name="ComprehensiveAnalysis",
-    epw_file=epw_file,
-    user_variables=['Temperature', 'Humidity', 'Pressure', 'Wind', 'Clouds and Radiation'],
-    user_pathways=user_pathways,
-    percentiles=percentiles,
-    future_years=future_years,
-    output_directory=output_directory,
-    model_sources=model_sources,
-    baseline_range=baseline_range
+    project_name="Historical_Morph",
+    epw_file="weather.epw",
+    user_variables=["Temperature"],
+    user_pathways=["target_1990s"],
+    percentiles=[50],
+    target_years=[1990],
+    output_directory="output/",
+    data_source="custom",
+    custom_data=custom_data,
+    reference_scenario="reference",
 )
 ```
 
-## 🔬 Available Climate Models
+Custom CSVs should have a `date` column (parseable by pandas) and a column named after the CMIP6 variable (e.g. `tas`, `tasmax`). Rows should be monthly.
 
-The package provides access to 50+ CMIP6 models. To see available models:
+## Climate scenarios
+
+| Scenario | SSP | Description | Expected warming |
+|----------|-----|-------------|------------------|
+| Best Case Scenario | ssp126 | Strong mitigation, renewable transition | ~1.8 C by 2100 |
+| Middle of the Road | ssp245 | Moderate mitigation efforts | ~2.7 C by 2100 |
+| Upper Middle Scenario | ssp370 | Regional rivalry, slow convergence | ~3.6 C by 2100 |
+| Worst Case Scenario | ssp585 | Fossil-fueled development | ~4.4 C by 2100 |
+
+## Morphing variables
+
+- **Temperature** -- dry bulb temperature (shift + stretch)
+- **Humidity** -- relative humidity via specific humidity (stretch)
+- **Pressure** -- atmospheric pressure (shift)
+- **Wind** -- wind speed (stretch)
+- **Clouds and Radiation** -- global/diffuse/direct radiation and sky cover
+- **Dew Point** -- recalculated from morphed temperature and humidity
+
+### Variable dependencies
+
+Some variables are automatically added when needed:
+
+- **Humidity** requires Temperature and Pressure
+- **Dew Point** requires Temperature, Humidity, and Pressure
+
+## Caching
+
+Climate model data is cached locally after the first download to speed up repeated analyses.
+
+```python
+import pyepwmorph.models.access as access
+
+stats = access.get_cmip6_cache_stats()
+access.clear_cmip6_cache()
+```
+
+## Available climate models
 
 ```python
 from pyepwmorph.tools.utilities import available_models
 
-# Get list of models available for all scenarios
 models = available_models()
-print(f"Available models: {len(models)}")
 ```
 
-## 🛠️ Development & Contributing
-
-### Development Environment Setup
+## Development
 
 ```bash
-# Clone and setup development environment
 git clone https://github.com/justinfmccarty/pyepwmorph.git
 cd pyepwmorph
+uv sync --extra dev
 
-# Create conda environment
-conda env create -f environment.yml
-conda activate pyepwmorph
-
-# Install in development mode
-pip install -e ".[dev]"
-```
-
-### Running Tests
-
-```bash
-# Run all tests
+# Run tests
 pytest
 
 # Run with coverage
 pytest --cov=pyepwmorph
-
-# Run specific test file
-pytest tests/test_pyepwmorph.py -v
 ```
 
-### Code Quality
+## Breaking changes in v2.0.0
 
-```bash
-# Format code
-black pyepwmorph/
-isort pyepwmorph/
+- **License changed** from GPL-3.0 to MIT.
+- **`future_years`** parameter renamed to **`target_years`** across the API.
+  The old name is still accepted with a deprecation warning.
+- **`MorphConfig`** accepts new parameters: `data_source`, `custom_data`,
+  `reference_scenario`, and `target_years`.
+- **EPW I/O** (`pyepwmorph.tools.io`) rewritten with stricter validation.
+  Files that are not exactly 8760 data rows will now raise `ValueError`.
+  The lat/lon parsing bug in the standalone `epw_location()` function has
+  been fixed.
+- **`coordinate_cmip6_data`** now accepts an optional `time_slices` dict
+  for custom temporal bounds instead of hardcoded 1960-2014 / 2015-2100.
+- **Removed** `requirements.txt`, `environment.yml`, `.bumpversion.cfg`.
+  Use `uv sync` or `pip install .` instead.
+- **Per-module `__version__`** strings removed. Use
+  `pyepwmorph.__version__` or `importlib.metadata.version("pyepwmorph")`.
 
-# Lint code
-flake8 pyepwmorph/
-```
+## Requirements
 
-## 🚀 Making New Releases
+- Python >= 3.9
+- Internet connection (for CMIP6 data download)
 
-For maintainers, the package uses an automated release system:
+## License
 
-### Quick Release
+MIT License. See [LICENSE](LICENSE).
 
-```bash
-# Patch release (1.0.3 → 1.0.4)
-./release.sh patch
-
-# Minor release (1.0.3 → 1.1.0)  
-./release.sh minor
-
-# Major release (1.0.3 → 2.0.0)
-./release.sh major
-```
-
-### What the Release Script Does
-
-1. ✅ **Git Status Check**: Ensures working directory is clean
-2. ✅ **Run Tests**: Validates code quality
-3. ✅ **Version Bump**: Automatically calculates and updates version numbers
-4. ✅ **Build Package**: Creates wheel and source distributions
-5. ✅ **Git Operations**: Commits changes, creates tags, pushes to GitHub
-6. ✅ **GitHub Integration**: Ready for GitHub release creation
-
-### Manual Release Process
-
-1. **Update version**: The release script handles this automatically
-2. **Create GitHub Release**: Visit the provided URL after running `./release.sh`
-3. **PyPI Publishing**: Automatic via GitHub Actions when release is created
-
-### Release Workflow
-
-```bash
-# Example: Creating a minor release
-./release.sh minor
-
-# Output will show:
-# ✅ Released version 1.1.0  
-# Create a GitHub release at: https://github.com/justinfmccarty/pyepwmorph/releases/new?tag=v1.1.0
-```
-
-## 📚 Documentation
-
-### API Reference
-
-The main workflow function provides comprehensive climate morphing:
-
-```python
-workflow.morphing_workflow(
-    project_name,          # str: Name for your project
-    epw_file,              # str: Path to input EPW file
-    user_variables,        # list: Variables to morph
-    user_pathways,         # list: Climate scenarios
-    percentiles,           # list: Percentile projections (1, 50, 99)
-    future_years,          # list: Target years for projections
-    output_directory,      # str: Where to save morphed files
-    model_sources=None,    # list: Specific models (optional)
-    baseline_range=None,   # list: Custom baseline period (optional)
-    write_file=True        # bool: Whether to write EPW files
-)
-```
-
-### Variable Dependencies
-
-Some variables have automatic dependencies:
-
-- **Humidity** requires Temperature and Pressure
-- **Dew Point** requires Temperature and Humidity
-
-The package automatically adds missing dependencies and notifies you.
-
-## ⚠️ Requirements
-
-- **Python**: 3.10 or higher
-- **Operating System**: Windows, macOS, Linux
-- **Internet Connection**: Required for downloading climate data
-- **Disk Space**: ~50MB for typical cache (varies by usage)
-
-## 📄 License
-
-This project is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See the [LICENSE](LICENSE) file for details.
-
-## 🤝 Support
-
-- **Issues**: [GitHub Issues](https://github.com/justinfmccarty/pyepwmorph/issues)
-- **Documentation**: This README and inline code documentation
-- **Examples**: See `examples/` directory for Jupyter notebooks
-
-## 📈 Citation
-
-If you use this package in research, please cite:
+## Citation
 
 ```text
-McCarty, J. (2025). pyepwmorph: A Python package for climate-informed building performance analysis. 
-Version 1.0.3. https://github.com/justinfmccarty/pyepwmorph
+McCarty, J. (2026). pyepwmorph: A Python package for climate-informed
+EPW file morphing. Version 2.0.0.
+https://github.com/justinfmccarty/pyepwmorph
 ```
-
----
-
-**🌟 Star this repository if you find it useful!**

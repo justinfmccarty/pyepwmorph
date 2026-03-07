@@ -14,8 +14,8 @@ warnings.filterwarnings("ignore")
 __author__ = "Justin McCarty"
 __copyright__ = "Copyright 2023"
 __credits__ = ["Justin McCarty"]
-__license__ = "GPLv3"
-__version__ = "0.1"
+__license__ = "MIT"
+
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
@@ -44,23 +44,14 @@ def access_cmip6_data(models, pathway, variable):
     --------
     >>> access_cmip6_data(['ACCESS-CM2', 'CanESM5', 'TaiESM1'], 'ssp126', 'tas')
     """
-    # Define search parameters for caching
+    # NOTE: No caching at this level because the data contains lazy dask arrays
+    # that reference the full global grid. Caching happens in coordinate.py after
+    # the data has been spatially selected and computed for a specific location.
+    
     table_id = 'Amon'  # atmospheric variables (A) saved at monthly resolution (mon)
     member_id = 'r1i1p1f1'
     
-    # Check cache first
-    cached_data = cache.get_cached_data(
-        experiment_id=pathway,
-        table_id=table_id,
-        variable_id=variable,
-        member_id=member_id,
-        source_id=models
-    )
-    
-    if cached_data is not None:
-        return cached_data
-    
-    # Cache miss - fetch from Google Cloud
+    # Fetch from Google Cloud
     gcsfs.GCSFileSystem(token='anon')
     # datastore_json = 'pangeo-cmip6.json'
     esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")
@@ -72,16 +63,6 @@ def access_cmip6_data(models, pathway, variable):
 
     # convert data catalog into a dictionary of xarray datasets
     dataset_dict = model_search.to_dataset_dict(zarr_kwargs={'consolidated': True, 'decode_times': False})
-    
-    # Save to cache before returning
-    cache.save_to_cache(
-        data=dataset_dict,
-        experiment_id=pathway,
-        table_id=table_id,
-        variable_id=variable,
-        member_id=member_id,
-        source_id=models
-    )
     
     return dataset_dict
 
@@ -109,7 +90,9 @@ def clear_cmip6_cache():
     """
     Clear all cached CMIP6 data.
     
-    This is useful for development or when you want to free up disk space.
+    This clears location-specific cached data that has been processed and stored
+    for faster repeated access. This is useful for development or when you want 
+    to free up disk space.
     
     Examples
     --------
@@ -123,7 +106,8 @@ def get_cmip6_cache_stats():
     Get statistics about the CMIP6 data cache.
     
     Returns information about cache size, number of files, and individual
-    file details for development and monitoring purposes.
+    file details for development and monitoring purposes. The cache stores
+    location-specific processed data.
     
     Returns
     -------

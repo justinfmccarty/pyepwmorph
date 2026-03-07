@@ -1,133 +1,132 @@
 # coding=utf-8
+"""Coordinate CMIP6 model data into a standard grid and time system.
+
+Climate model data comes in varied grid systems and temporal indices.
+These functions spatially select and temporally slice the data before
+it is fed to the morphing algorithm.
 """
-climate model data comes in a variety of shapes forms and sizes (grid systems, temporal indices, etc.)
-these scripts provide help to coordinate them into a standard system before being processed by the algorithm,
-"""
-import xarray as xr
-import warnings
-import dask
+
+import logging
 import time
+import warnings
+
+import dask
 import pandas as pd
+import xarray as xr
 
 from pyepwmorph.tools import cache
 
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
 __author__ = "Justin McCarty"
-__copyright__ = "Copyright 2023"
+__copyright__ = "Copyright 2023-2026"
 __credits__ = ["Justin McCarty"]
-__license__ = "GPLv3"
-__version__ = "0.1"
+__license__ = "MIT"
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
 
+DEFAULT_TIME_SLICES = {
+    'historical': ('1960', '2014'),
+}
+DEFAULT_SSP_SLICE = ('2015', '2100')
 
-def coordinate_cmip6_data(latitude, longitude, pathway, variable, dset_dict):
-    """
-    Clean up the CMIP6 model data given known inconsistencies
-    Additionally this script is necessary to spatially and temproally constrict the files
+
+def coordinate_cmip6_data(
+    latitude,
+    longitude,
+    pathway,
+    variable,
+    dset_dict,
+    time_slices=None,
+):
+    """Spatially select and temporally slice CMIP6 data for a location.
 
     Parameters
     ----------
     latitude : float
-        the latitude of the location
+        Latitude of the location.
     longitude : float
-        the longitude of the location
-    pathway : string
-        the pathway that is being worked on from ['historical','ssp126','ssp245','ssp585']
+        Longitude of the location.
+    pathway : str
+        Experiment / scenario ID (e.g. ``'historical'``, ``'ssp245'``).
+    variable : str
+        Climate variable being processed.
     dset_dict : dict
-        a dictionary of xarray datasets
-        the output of access.access_cmip6_data
+        Dictionary of xarray Datasets from ``access.access_cmip6_data``.
+    time_slices : dict or None
+        Optional override for temporal slicing.  Keys are pathway names,
+        values are ``(start, end)`` string tuples.  Any pathway not in
+        the dict falls back to ``DEFAULT_SSP_SLICE``.
 
     Returns
     -------
     dict
-        a dictionary of xarray datasets keyed by their name from the input dict
-
+        Dictionary of computed xarray Datasets keyed by source name.
     """
-    
-    # Extract source IDs for cache key
+    slices = {**DEFAULT_TIME_SLICES}
+    if time_slices:
+        slices.update(time_slices)
+
     source_ids = list(dset_dict.keys())
-    # Extract just the model names from the full key names (e.g., 'CMIP.ACCESS.ACCESS-CM2.ssp126.Amon.gn' -> 'ACCESS-CM2')
     model_names = []
     for source_id in source_ids:
         parts = source_id.split('.')
         if len(parts) >= 3:
-            model_names.append(parts[2])  # Model name is typically the 3rd part
+            model_names.append(parts[2])
         else:
-            model_names.append(source_id)  # Fallback to full key if unexpected format
-    
-    # Check cache first
+            model_names.append(source_id)
+
     cached_data = cache.get_cached_coordinate_data(
         latitude=latitude,
         longitude=longitude,
         pathway=pathway,
         variable=variable,
-        source_id=model_names
+        source_id=model_names,
     )
-    
     if cached_data is not None:
         return cached_data
 
-    # set the blank dict for the datasets to be placed in keyed by source_id
+    time_start, time_end = slices.get(pathway, DEFAULT_SSP_SLICE)
+
     ds_dict = {}
     for name, ds in dset_dict.items():
-        start_time = time.time()
-        # rename spatial dimensions if necessary
         if ('longitude' in ds.dims) and ('latitude' in ds.dims):
-            ds = ds.rename({'longitude': 'lon', 'latitude': 'lat'})  # some models labelled dimensions differently...
+            ds = ds.rename({'longitude': 'lon', 'latitude': 'lat'})
 
-        # decode for days-since or hours-since
-        # http://cfconventions.org/Data/cf-conventions/cf-conventions-1.10/cf-conventions.html#time-coordinate
         ds = xr.decode_cf(ds)
-
-        # constrict the bounds of the file based on pathway or historical
-        if pathway == 'historical':
-            ds = ds.sel(time=slice('1960', '2014'))
-        else:
-            ds = ds.sel(time=slice('2015', '2100'))
-
-        # select the spatially relevant data
+        ds = ds.sel(time=slice(time_start, time_end))
         ds = ds.sel(lat=latitude, lon=longitude, method='nearest')
 
-        # drop redundant variables (like "height: 2m")
-        for coord in ds.coords:
+        for coord in list(ds.coords):
             if coord not in ['lat', 'lon', 'time']:
                 ds = ds.drop_vars(coord)
 
-        # need year for the date_range
         ds.coords['year'] = ds.time.dt.year
+        ds.coords['time'] = xr.date_range(
+            start=str(ds.time.dt.year.values[0]),
+            periods=len(ds.time.dt.year.values),
+            freq="MS",
+            calendar="standard",
+            use_cftime=False,
+        )
 
-        # make a pandas data_range which is needed later on for resampling
-        ds.coords['time'] = xr.date_range(start=str(ds.time.dt.year.values[0]),
-                                          periods=len(ds.time.dt.year.values),
-                                          freq="MS", calendar="standard",
-                                          use_cftime=False)
-
-        # Add variable array to dictionary
         for d in ds.dims:
-            if d == 'time':
-                pass
-            else:
+            if d != 'time':
                 ds[variable] = ds[variable].sel({f'{d}': 0}, drop=True)
 
         ds_dict[name] = ds
-        end_time = time.time()
-    # print("Start Compute")
-    # start_time = time.time()
-    datasets = dask.compute(ds_dict)[0]
-    # end_time = time.time()
-    # print(f"Compute Time: {end_time - start_time:.2f} seconds")
 
-    # Save to cache before returning
+    datasets = dask.compute(ds_dict)[0]
+
     cache.save_coordinate_to_cache(
         data=datasets,
         latitude=latitude,
         longitude=longitude,
         pathway=pathway,
         variable=variable,
-        source_id=model_names
+        source_id=model_names,
     )
 
     return datasets

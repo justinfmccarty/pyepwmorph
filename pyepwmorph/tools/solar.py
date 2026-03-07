@@ -14,8 +14,8 @@ warnings.filterwarnings("ignore")
 __author__ = "Justin McCarty"
 __copyright__ = "Copyright 2023"
 __credits__ = ["Justin McCarty"]
-__license__ = "GPLv3"
-__version__ = "0.1"
+__license__ = "MIT"
+
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"

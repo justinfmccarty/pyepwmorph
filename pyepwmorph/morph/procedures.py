@@ -439,7 +439,7 @@ def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor)
     # calc persistence
     solar_df['persistence'] = morph_solar_utils.persistence(hourly_clearness, sunrise_sunset_idx)
     morphed_difhor = solar_df.apply(
-        lambda x: x['glohorrad_Whm2'] * (1 / (1 + math.exp(-5.38 + 6.63 * x['hourly_clearness'] +
+        lambda x: x['glohorrad_Whm2'] * (1 / (1 + np.exp(-5.38 + 6.63 * x['hourly_clearness'] +
                                                            0.006 * x['local_solar_time'] - 0.007 *
                                                            x['solar_alt'] + 1.75 * x['daily_clearness'] +
                                                            1.31 * x['persistence']))), axis=1).fillna(0).astype(int)

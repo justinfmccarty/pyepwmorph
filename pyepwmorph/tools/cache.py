@@ -1,6 +1,10 @@
 # coding=utf-8
 """
-Caching utilities for pyepwmorph to store and retrieve CMIP6 data
+Caching utilities for pyepwmorph to store and retrieve location-specific processed CMIP6 data.
+
+This module caches data AFTER it has been spatially selected and computed for specific
+coordinates. Caching happens at the coordinate.py level to ensure location-specific data
+is properly stored with location information in the cache key.
 """
 
 import pickle
@@ -12,8 +16,8 @@ import time
 __author__ = "Justin McCarty"
 __copyright__ = "Copyright 2023"
 __credits__ = ["Justin McCarty"]
-__license__ = "GPLv3"
-__version__ = "0.1"
+__license__ = "MIT"
+
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
@@ -26,44 +30,6 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "pyepwmorph_cache"
 def _ensure_cache_dir():
     """Ensure the cache directory exists."""
     CACHE_DIR.mkdir(exist_ok=True)
-
-
-def _get_cache_key(experiment_id: str, table_id: str, variable_id: str, 
-                   member_id: str, source_id: List[str]) -> str:
-    """
-    Generate a structured cache key from search parameters.
-    
-    Parameters
-    ----------
-    experiment_id : str
-        The experiment ID (pathway)
-    table_id : str
-        The table ID (e.g., 'Amon')
-    variable_id : str
-        The variable ID
-    member_id : str
-        The member ID (e.g., 'r1i1p1f1')
-    source_id : List[str]
-        List of model sources
-        
-    Returns
-    -------
-    str
-        Structured cache key
-    """
-    # Sort source_id list to handle different ordering
-    sorted_sources = sorted(source_id)
-    sources_str = "_".join(sorted_sources).lower().replace("-", "")
-    
-    key_parts = [
-        f"experiment_{experiment_id}",
-        f"table_{table_id}",
-        f"variable_{variable_id}",
-        f"member_{member_id}",
-        f"sources_{sources_str}"
-    ]
-    
-    return "__".join(key_parts)
 
 
 def _get_coordinate_cache_key(latitude: float, longitude: float, pathway: str, 
@@ -98,7 +64,7 @@ def _get_coordinate_cache_key(latitude: float, longitude: float, pathway: str,
     lon_str = f"{longitude:.4f}".replace(".", "p").replace("-", "n")
     
     key_parts = [
-        "coordinate",  # Prefix to distinguish from access cache
+        "coordinate",  # Prefix to identify location-specific cache entries
         f"lat_{lat_str}",
         f"lon_{lon_str}",
         f"pathway_{pathway}",
@@ -160,88 +126,6 @@ def _cleanup_cache_if_needed():
         filepath.unlink()
         total_size_mb -= size_mb
         print(f"Cache cleanup: Removed {filepath.name} ({size_mb:.2f} MB)")
-
-
-def get_cached_data(experiment_id: str, table_id: str, variable_id: str, 
-                   member_id: str, source_id: List[str]) -> Optional[Dict]:
-    """
-    Retrieve cached CMIP6 data if it exists.
-    
-    Parameters
-    ----------
-    experiment_id : str
-        The experiment ID (pathway)
-    table_id : str
-        The table ID (e.g., 'Amon')
-    variable_id : str
-        The variable ID
-    member_id : str
-        The member ID (e.g., 'r1i1p1f1')
-    source_id : List[str]
-        List of model sources
-        
-    Returns
-    -------
-    Optional[Dict]
-        Cached dataset dictionary or None if not found
-    """
-    _ensure_cache_dir()
-    
-    cache_key = _get_cache_key(experiment_id, table_id, variable_id, member_id, source_id)
-    cache_filepath = _get_cache_filepath(cache_key)
-    
-    if not cache_filepath.exists():
-        return None
-    
-    try:
-        with open(cache_filepath, 'rb') as f:
-            cached_data = pickle.load(f)
-        print(f"Cache hit: Loaded data for {cache_key}")
-        return cached_data
-    except (IOError, pickle.PickleError) as e:
-        print(f"Cache read error for {cache_key}: {e}")
-        # Remove corrupted cache file
-        cache_filepath.unlink()
-        return None
-
-
-def save_to_cache(data: Dict, experiment_id: str, table_id: str, variable_id: str, 
-                 member_id: str, source_id: List[str]):
-    """
-    Save CMIP6 data to cache.
-    
-    Parameters
-    ----------
-    data : Dict
-        Dataset dictionary to cache
-    experiment_id : str
-        The experiment ID (pathway)
-    table_id : str
-        The table ID (e.g., 'Amon')
-    variable_id : str
-        The variable ID
-    member_id : str
-        The member ID (e.g., 'r1i1p1f1')
-    source_id : List[str]
-        List of model sources
-    """
-    _ensure_cache_dir()
-    
-    cache_key = _get_cache_key(experiment_id, table_id, variable_id, member_id, source_id)
-    cache_filepath = _get_cache_filepath(cache_key)
-    
-    try:
-        with open(cache_filepath, 'wb') as f:
-            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-        
-        size_mb = _get_file_size_mb(cache_filepath)
-        print(f"Cache save: Stored data for {cache_key} ({size_mb:.2f} MB)")
-        
-        # Clean up cache if needed
-        _cleanup_cache_if_needed()
-        
-    except (IOError, pickle.PickleError) as e:
-        print(f"Cache write error for {cache_key}: {e}")
 
 
 def get_cached_coordinate_data(latitude: float, longitude: float, pathway: str, 
