@@ -5482,7 +5482,7 @@ wheels = [
 
 [[package]]
 name = "pyepwmorph"
-version = "2.1.1"
+version = "2.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "dask", version = "2024.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -5495,6 +5495,10 @@ dependencies = [
     { name = "intake-esm", version = "2023.11.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "intake-esm", version = "2025.7.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "intake-esm", version = "2025.12.12", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ipython", version = "8.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "ipython", version = "8.38.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "ipython", version = "9.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "ipython", version = "9.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "lz4" },
     { name = "meteocalc" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -5535,6 +5539,7 @@ requires-dist = [
     { name = "intake", specifier = ">=0.6.0" },
     { name = "intake-esm", specifier = ">=2023.6.0" },
     { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.20.0" },
+    { name = "ipython", specifier = ">=7.0" },
     { name = "lz4", specifier = ">=4.0.0" },
     { name = "meteocalc", specifier = ">=1.1.0" },
     { name = "numpy", specifier = ">=1.20.0" },
