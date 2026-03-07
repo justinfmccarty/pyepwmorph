@@ -152,8 +152,8 @@ pytest --cov=pyepwmorph
 
 Copy-paste (change version number) for release statement
 ```bash
-gh release create v2.1.2 \
-  --title "v2.1.2" \
+gh release create v2.2.0 \
+  --title "v2.2.0" \
   --notes "## What's new
 
 See README for full breaking changes list."

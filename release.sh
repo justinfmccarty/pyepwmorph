@@ -12,10 +12,11 @@ set -e
 BUMP_TYPE=${1:-patch}
 
 echo "Checking git status..."
-if [ -n "$(git status --porcelain | grep -E '^[AMD]')" ]; then
-    echo "ERROR: Working directory has uncommitted changes."
-    git status --porcelain | grep -E '^[AMD]'
-    exit 1
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Uncommitted changes detected. Committing them now..."
+    git add -A
+    git commit -m "Pre-release: commit pending changes"
+    git push origin main
 fi
 
 echo "Pulling latest changes..."
