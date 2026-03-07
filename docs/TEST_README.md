@@ -303,7 +303,6 @@ Key dependencies that must be available:
 - `xarray` - Climate data handling
 - `gcsfs` - Google Cloud Storage access
 - `intake-esm` - Climate model catalog
-- `xclim` - Climate data processing
 
 ## Contributing
 

@@ -145,6 +145,22 @@ pytest
 pytest --cov=pyepwmorph
 ```
 
+### Releases
+```bash
+./release.sh [patch|minor|major]
+```
+
+Copy-paste (change version number) for release statement
+```bash
+gh release create v2.1.2 \
+  --title "v2.1.2" \
+  --notes "## What's new
+
+See README for full breaking changes list."
+```
+
+
+
 ## Breaking changes in v2.0.0
 
 - **License changed** from GPL-3.0 to MIT.

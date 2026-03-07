@@ -1,10 +1,10 @@
 # coding=utf-8
 """
-This module leverages xclim to create ensembles from the multiple model inputs downlaoded for a single pathway and variable.
-This is what enables to slicing of the data from a percentile point of view.
+This module creates ensembles from multiple model inputs downloaded for a single pathway and variable.
+This is what enables the slicing of the data from a percentile point of view.
 """
 import pandas as pd
-from xclim import ensembles
+import xarray as xr
 from pyepwmorph.tools import utilities
 import warnings
 
@@ -44,12 +44,28 @@ def build_cmip6_ensemble(percentiles, variable, datasets):
     Examples
     --------
     >>> build_cmip6_ensemble(['1','50','99'], 'tas', datasets)
+
+    Raises
+    ------
+    ValueError
+        If *datasets* is empty (no model data available).
     """
-    ens = ensembles.create_ensemble([ds.reset_coords(drop=True) for ds in datasets.values()])
-    ens_perc = ensembles.ensemble_percentiles(ens, values=percentiles, split=False)
+    if not datasets:
+        raise ValueError(
+            f"No model datasets available for variable '{variable}'. "
+            f"The selected climate models may not provide this variable. "
+            f"Try selecting different model sources."
+        )
+    ens = xr.concat(
+        [ds.reset_coords(drop=True) for ds in datasets.values()],
+        dim='realization'
+    )
+    q_values = [int(p) / 100 for p in percentiles]
+    ens_perc = ens.quantile(q_values, dim='realization')
     percentile_dict = dict()
     for ptilekey in percentiles:
-        percentile_dict[ptilekey] = ens_perc.sel(percentiles=ptilekey)[variable].to_dataframe()[variable].rename(ptilekey)
+        q = int(ptilekey) / 100
+        percentile_dict[ptilekey] = ens_perc.sel(quantile=q)[variable].to_dataframe()[variable].rename(ptilekey)
 
     return pd.DataFrame(percentile_dict)
 

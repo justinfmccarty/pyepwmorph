@@ -354,10 +354,10 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
     hour_series.index = present_glohor.index
 
     # resample to get hours for each month and zip into dict with int months
-    month_hours = morph_utils.zip_month_data(hour_series.resample("M").sum().tolist())
+    month_hours = morph_utils.zip_month_data(hour_series.resample("ME").sum().tolist())
 
     # resample glohor to get watt-hours per m2 per month
-    month_glohor = morph_utils.zip_month_data(present_glohor.resample('M').sum().tolist())
+    month_glohor = morph_utils.zip_month_data(present_glohor.resample('ME').sum().tolist())
 
     # get mean glohor per month
     month_glohor_mean_list = []

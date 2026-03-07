@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
 import threading
+import traceback
 
 from pyepwmorph.tools import workflow as morph_work
 from pyepwmorph.tools import io as morph_io
@@ -108,10 +109,9 @@ class MorphTab:
             'INM-CM4-8': tk.BooleanVar(value=True),
             'IPSL-CM6A-LR': tk.BooleanVar(value=True),
             'INM-CM5-0': tk.BooleanVar(value=True),
-            'ACCESS-CM2': tk.BooleanVar(value=True),
             'MIROC6': tk.BooleanVar(value=True),
             'EC-Earth3-Veg-LR': tk.BooleanVar(value=True),
-            'BCC-CSM2-MR': tk.BooleanVar(value=True)
+            'BCC-CSM2-MR': tk.BooleanVar(value=True),
         }
         
         # Output settings
@@ -511,10 +511,13 @@ class MorphTab:
                 f"Output directory:\n{output_directory}"
             ))
             
-        except (IOError, ValueError, KeyError, RuntimeError) as e:
+        except Exception as e:
             error_msg = f"Error during morphing: {str(e)}"
+            tb = traceback.format_exc()
             self.log_message("\n" + "="*100)
             self.log_message(f"✗ {error_msg}")
+            self.log_message("-"*100)
+            self.log_message(tb)
             self.log_message("="*100)
             self.scrollable_frame.after(0, lambda: messagebox.showerror("Error", error_msg))
     

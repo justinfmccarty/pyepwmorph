@@ -3,8 +3,6 @@
 various scripts for accessing different flavors of climate models
 """
 
-import gcsfs
-import intake
 import warnings
 
 from pyepwmorph.tools import cache
@@ -44,6 +42,9 @@ def access_cmip6_data(models, pathway, variable):
     --------
     >>> access_cmip6_data(['ACCESS-CM2', 'CanESM5', 'TaiESM1'], 'ssp126', 'tas')
     """
+    import gcsfs
+    import intake
+
     # NOTE: No caching at this level because the data contains lazy dask arrays
     # that reference the full global grid. Caching happens in coordinate.py after
     # the data has been spatially selected and computed for a specific location.
@@ -80,6 +81,8 @@ def build_accessible_data_list():
     --------
     >>> build_accessible_data_list()
     """
+    import gcsfs
+    import intake
     gcsfs.GCSFileSystem(token='anon')
     # datastore_json = 'pangeo-cmip6.json'
     esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")

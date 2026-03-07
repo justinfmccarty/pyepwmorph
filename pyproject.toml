@@ -46,6 +46,7 @@ dependencies = [
     
     # Basic utilities
     'lz4>=4.0.0',
+    'ipython>=7.0',
 ]
 
 [project.optional-dependencies]

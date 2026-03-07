@@ -9,8 +9,6 @@ import pandas as pd
 import calendar
 import warnings
 
-import intake
-
 warnings.filterwarnings("ignore")
 
 __author__ = "Justin McCarty"
@@ -23,7 +21,7 @@ __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
 
 
-def min_max_mean_means(timeseries, first_resample="D", second_resample="M"):
+def min_max_mean_means(timeseries, first_resample="D", second_resample="ME"):
     """
     Given a timeseries, resample to the max, the min, and the mean along a dimension.
         Then resample again at a coarser resolution to get the mean
@@ -289,6 +287,7 @@ def calc_period(year, period):
 
 
 def available_models():
+    import intake
     esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")
     esm_data_df = esm_data.df
     
