@@ -7,7 +7,7 @@ include = ["pyepwmorph/*"]
 
 [project]
 name = "pyepwmorph"
-version = "2.0.0"
+version = "2.0.1"
 authors = [
   { name="Justin McCarty", email="mccarty.justin.f@gmail.com" },
 ]
@@ -33,7 +33,6 @@ dependencies = [
     'distributed>=2023.5.0', 
     'gcsfs>=2023.5.0',
     'intake-esm>=2023.6.0',
-    'xclim>=0.40.0',
     'intake>=0.6.0',
     'pyarrow>=13.0.0',
     
