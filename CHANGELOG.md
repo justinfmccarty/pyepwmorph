@@ -111,7 +111,7 @@ temperature, pressure, and global horizontal radiation are unaffected.
 - `morphing_workflow` accepts `time_slices` and forwards it to the CMIP6 fetch.
 - A continuous integration workflow running ruff and the test suite on Python
   3.9 through 3.13.
-- The test suite grew from 42 to 103 tests, including an identity-morph suite
+- The test suite grew from 42 to 104 tests, including an identity-morph suite
   that asserts an unchanged climate leaves the EPW unchanged for every variable.
   That suite alone catches all five numerical bugs fixed in this release.
 
