@@ -1,17 +1,14 @@
-# coding=utf-8
 """
 This module creates ensembles from multiple model inputs downloaded for a single pathway and variable.
 This is what enables the slicing of the data from a percentile point of view.
 """
 import pandas as pd
 import xarray as xr
-from pyepwmorph.tools import utilities
-import warnings
 
-warnings.filterwarnings("ignore")
+from pyepwmorph.tools import utilities
 
 __author__ = "Justin McCarty"
-__copyright__ = "Copyright 2023"
+__copyright__ = "Copyright 2023-2026"
 __credits__ = ["Justin McCarty"]
 __license__ = "MIT"
 

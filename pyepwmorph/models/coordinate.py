@@ -1,4 +1,3 @@
-# coding=utf-8
 """Coordinate CMIP6 model data into a standard grid and time system.
 
 Climate model data comes in varied grid systems and temporal indices.
@@ -7,16 +6,10 @@ it is fed to the morphing algorithm.
 """
 
 import logging
-import time
-import warnings
 
 import dask
-import pandas as pd
 import xarray as xr
 
-from pyepwmorph.tools import cache
-
-warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 __author__ = "Justin McCarty"
@@ -64,29 +57,16 @@ def coordinate_cmip6_data(
     -------
     dict
         Dictionary of computed xarray Datasets keyed by source name.
+
+    Notes
+    -----
+    Caching lives in ``workflow.compile_climate_model_data`` so that a cache
+    hit avoids opening the remote catalogue at all.  Calling this function
+    directly always recomputes.
     """
     slices = {**DEFAULT_TIME_SLICES}
     if time_slices:
         slices.update(time_slices)
-
-    source_ids = list(dset_dict.keys())
-    model_names = []
-    for source_id in source_ids:
-        parts = source_id.split('.')
-        if len(parts) >= 3:
-            model_names.append(parts[2])
-        else:
-            model_names.append(source_id)
-
-    cached_data = cache.get_cached_coordinate_data(
-        latitude=latitude,
-        longitude=longitude,
-        pathway=pathway,
-        variable=variable,
-        source_id=model_names,
-    )
-    if cached_data is not None:
-        return cached_data
 
     time_start, time_end = slices.get(pathway, DEFAULT_SSP_SLICE)
 
@@ -118,15 +98,4 @@ def coordinate_cmip6_data(
 
         ds_dict[name] = ds
 
-    datasets = dask.compute(ds_dict)[0]
-
-    cache.save_coordinate_to_cache(
-        data=datasets,
-        latitude=latitude,
-        longitude=longitude,
-        pathway=pathway,
-        variable=variable,
-        source_id=model_names,
-    )
-
-    return datasets
+    return dask.compute(ds_dict)[0]

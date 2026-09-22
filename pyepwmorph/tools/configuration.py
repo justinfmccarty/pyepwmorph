@@ -1,4 +1,3 @@
-# coding=utf-8
 """Configuration object used throughout the morphing pipeline."""
 
 import logging
@@ -7,7 +6,6 @@ from pathlib import Path
 
 from pyepwmorph.tools import io as morpher_io
 
-warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 __author__ = "Justin McCarty"
@@ -37,6 +35,49 @@ VARIABLE_DEPENDENCIES = {
     'Humidity': ['Temperature', 'Pressure'],
     'Dew Point': ['Temperature', 'Humidity', 'Pressure'],
 }
+
+#: The order variables must be morphed in so that every variable sees its
+#: dependencies already morphed.  Pressure and temperature feed humidity,
+#: which in turn feeds dew point.
+MORPH_ORDER = ['Pressure', 'Temperature', 'Humidity', 'Dew Point', 'Wind', 'Clouds and Radiation']
+
+
+def resolve_variable_order(user_variables):
+    """Expand variable dependencies and return them in a safe morphing order.
+
+    Dependencies are pulled in transitively, so asking for ``Dew Point``
+    alone yields pressure, temperature, humidity, and dew point.  Every
+    resolved variable is written to the morphed EPW, which keeps the output
+    file internally consistent.
+
+    Parameters
+    ----------
+    user_variables : list[str]
+        The variables the caller asked for.
+
+    Returns
+    -------
+    list[str]
+        Supported variables, deduplicated and ordered for morphing.
+    """
+    resolved = set()
+    pending = list(user_variables)
+    while pending:
+        variable = pending.pop()
+        if variable in resolved:
+            continue
+        resolved.add(variable)
+        pending.extend(VARIABLE_DEPENDENCIES.get(variable, []))
+
+    added = resolved - set(user_variables)
+    if added:
+        logger.info("Added dependencies of the requested variables: %s", ", ".join(sorted(added)))
+
+    unsupported = resolved - set(MORPH_ORDER)
+    if unsupported:
+        logger.warning("Ignoring unsupported morphing variable(s): %s", ", ".join(sorted(unsupported)))
+
+    return [variable for variable in MORPH_ORDER if variable in resolved]
 
 
 class MorphConfig:
@@ -148,6 +189,7 @@ class MorphConfig:
 
         self.model_pathways: list[str] = []
         self.model_variables: list[str] = []
+        self.resolved_variables: list[str] = []
 
         if output_directory is not None:
             self.output_directory = output_directory
@@ -169,22 +211,13 @@ class MorphConfig:
 
     def assign_model_variables(self):
         """Resolve user-facing variable names to CMIP6-style variable IDs."""
-        all_required_vars = set(self.user_variables)
+        self.resolved_variables = resolve_variable_order(self.user_variables)
 
-        for user_var in self.user_variables:
-            if user_var in VARIABLE_DEPENDENCIES:
-                missing_deps = set(VARIABLE_DEPENDENCIES[user_var]) - set(self.user_variables)
-                if missing_deps:
-                    dep_list = ', '.join(missing_deps)
-                    logger.info("%s requires morphing of %s -- adding automatically", user_var, dep_list)
-                    all_required_vars.update(missing_deps)
+        model_variables = []
+        for variable in self.resolved_variables:
+            model_variables.extend(VARIABLE_MAPPING.get(variable, []))
 
-        self.model_variables = []
-        for var in all_required_vars:
-            if var in VARIABLE_MAPPING:
-                self.model_variables.extend(VARIABLE_MAPPING[var])
-
-        self.model_variables = list(set(self.model_variables))
+        self.model_variables = sorted(set(model_variables))
         logger.debug("Resolved model variables: %s", self.model_variables)
 
     def assign_model_pathways(self):

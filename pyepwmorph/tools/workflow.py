@@ -1,4 +1,3 @@
-# coding=utf-8
 """High-level workflows for compiling climate data and morphing EPW files.
 
 Supports both CMIP6 (Pangeo) and custom CSV-based climate model data.
@@ -8,15 +7,14 @@ import copy
 import datetime
 import logging
 import os
-import warnings
 
-from pyepwmorph.models import access, coordinate, assemble, custom
+from pyepwmorph.models import access, assemble, coordinate, custom
 from pyepwmorph.morph import procedures
+from pyepwmorph.tools import cache
+from pyepwmorph.tools import configuration as morph_config
 from pyepwmorph.tools import io as morph_io
 from pyepwmorph.tools import utilities as morph_utils
-from pyepwmorph.tools import configuration as morph_config
 
-warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 __author__ = "Justin McCarty"
@@ -29,25 +27,50 @@ __status__ = "Production"
 
 
 # ---------------------------------------------------------------------------
-# CMIP6 data compilation (unchanged from v1)
+# CMIP6 data compilation
 # ---------------------------------------------------------------------------
 
-def compile_climate_model_data(model_sources, pathway, variable, longitude, latitude, percentiles):
+def compile_climate_model_data(model_sources, pathway, variable, longitude, latitude, percentiles,
+                               time_slices=None):
     """Fetch, spatially select, and ensemble CMIP6 data for one pathway + variable.
+
+    The location-specific result is cached, and the cache is consulted before
+    the remote catalogue is opened so that a hit costs no network traffic.
 
     Returns
     -------
     pd.DataFrame
         Columns keyed by percentile, rows are the monthly time series.
     """
-    dataset_dict = access.access_cmip6_data(model_sources, pathway, variable)
-    dataset_dict = coordinate.coordinate_cmip6_data(
-        latitude, longitude, pathway, variable, dataset_dict,
+    datasets = cache.get_cached_coordinate_data(
+        latitude=latitude,
+        longitude=longitude,
+        pathway=pathway,
+        variable=variable,
+        source_id=model_sources,
+        time_slices=time_slices,
     )
-    return assemble.build_cmip6_ensemble(percentiles, variable, dataset_dict)
+
+    if datasets is None:
+        dataset_dict = access.access_cmip6_data(model_sources, pathway, variable)
+        datasets = coordinate.coordinate_cmip6_data(
+            latitude, longitude, pathway, variable, dataset_dict, time_slices=time_slices,
+        )
+        cache.save_coordinate_to_cache(
+            data=datasets,
+            latitude=latitude,
+            longitude=longitude,
+            pathway=pathway,
+            variable=variable,
+            source_id=model_sources,
+            time_slices=time_slices,
+        )
+
+    return assemble.build_cmip6_ensemble(percentiles, variable, datasets)
 
 
-def iterate_compile_model_data(pathways, variables, model_sources, longitude, latitude, percentiles):
+def iterate_compile_model_data(pathways, variables, model_sources, longitude, latitude, percentiles,
+                               time_slices=None):
     """Iterate over pathways x variables and compile CMIP6 model data.
 
     Returns
@@ -69,6 +92,7 @@ def iterate_compile_model_data(pathways, variables, model_sources, longitude, la
             try:
                 result = compile_climate_model_data(
                     model_sources, pathway, variable, longitude, latitude, percentiles,
+                    time_slices=time_slices,
                 )
                 model_data_dict[pathway][variable] = result
             except ValueError as exc:
@@ -144,6 +168,13 @@ def morph_epw(
 ):
     """Apply morphing procedures to an EPW file.
 
+    The requested variables are expanded to include their dependencies and
+    sorted into a single morphing order (see
+    ``configuration.resolve_variable_order``), so every variable is computed
+    exactly once and every dependency is already morphed when it is needed.
+    All resolved variables are written to the returned EPW, which keeps the
+    output file internally consistent.
+
     Parameters
     ----------
     epw_file : str or Epw
@@ -174,10 +205,10 @@ def morph_epw(
     else:
         epw_object = copy.deepcopy(epw_file)
 
-    ref = reference_scenario
-    morphed_dict = {}
+    present = epw_object.dataframe
+    location = epw_object.location
 
-    def _get_series(scenario, var, pctile):
+    def _get_series(scenario, var):
         """Retrieve a percentile series from model_data_dict with clear errors."""
         if scenario not in model_data_dict:
             raise KeyError(
@@ -190,251 +221,95 @@ def morph_epw(
                 f"Available variables: {list(model_data_dict[scenario].keys())}. "
                 f"The selected climate models may not provide this variable."
             )
-        return model_data_dict[scenario][var][pctile]
+        return model_data_dict[scenario][var][percentile]
 
-    for variable in user_variables:
-        if variable == 'Temperature':
-            if 'drybulb_C' in morphed_dict:
-                continue
-            tas_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'tas', percentile),
-                _get_series(pathway, 'tas', percentile), 'tas',
+    def _climatology(var):
+        """Return the (baseline, future) monthly climatologies for a variable."""
+        return assemble.calc_model_climatologies(
+            baseline_range, target_range,
+            _get_series(reference_scenario, var), _get_series(pathway, var), var,
+        )
+
+    morphed = {}
+    for variable in morph_config.resolve_variable_order(user_variables):
+        if variable == 'Pressure':
+            psl_base, psl_future = _climatology('psl')
+            morphed['atmos_Pa'] = procedures.morph_psl(
+                present['atmos_Pa'], psl_future, psl_base,
             )
-            tmax_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'tasmax', percentile),
-                _get_series(pathway, 'tasmax', percentile), 'tasmax',
+
+        elif variable == 'Temperature':
+            tas_base, tas_future = _climatology('tas')
+            tasmax_base, tasmax_future = _climatology('tasmax')
+            tasmin_base, tasmin_future = _climatology('tasmin')
+            morphed['drybulb_C'] = procedures.morph_dbt_year(
+                present['drybulb_C'],
+                tas_future, tas_base,
+                tasmax_future, tasmax_base,
+                tasmin_future, tasmin_base,
             )
-            tmin_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'tasmin', percentile),
-                _get_series(pathway, 'tasmin', percentile), 'tasmin',
-            )
-            present_dbt = epw_object.dataframe['drybulb_C']
-            morphed_dbt = procedures.morph_dbt_year(
-                present_dbt,
-                tas_climatologies[1], tas_climatologies[0],
-                tmax_climatologies[1], tmax_climatologies[0],
-                tmin_climatologies[1], tmin_climatologies[0],
-            ).values
-            morphed_dict['drybulb_C'] = morphed_dbt
 
         elif variable == 'Humidity':
-            if 'relhum_percent' in morphed_dict:
-                continue
-            relhum_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'huss', percentile),
-                _get_series(pathway, 'huss', percentile), 'huss',
+            huss_base, huss_future = _climatology('huss')
+            morphed['relhum_percent'] = procedures.morph_relhum(
+                present['relhum_percent'], present['atmos_Pa'], present['drybulb_C'],
+                morphed['atmos_Pa'], morphed['drybulb_C'],
+                huss_future, huss_base,
             )
-            present_relhum = epw_object.dataframe['relhum_percent']
-            present_psl = epw_object.dataframe['atmos_Pa']
-            present_dbt = epw_object.dataframe['drybulb_C']
-
-            if 'atmos_Pa' in morphed_dict and 'drybulb_C' in morphed_dict:
-                morphed_relhum = procedures.morph_relhum(
-                    present_relhum, present_psl, present_dbt,
-                    morphed_dict['atmos_Pa'], morphed_dict['drybulb_C'],
-                    relhum_climatologies[1], relhum_climatologies[0],
-                ).values
-            else:
-                tas_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tas', percentile),
-                    _get_series(pathway, 'tas', percentile), 'tas',
-                )
-                tmax_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tasmax', percentile),
-                    _get_series(pathway, 'tasmax', percentile), 'tasmax',
-                )
-                tmin_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tasmin', percentile),
-                    _get_series(pathway, 'tasmin', percentile), 'tasmin',
-                )
-                morphed_dbt = procedures.morph_dbt_year(
-                    present_dbt,
-                    tas_climatologies[1], tas_climatologies[0],
-                    tmax_climatologies[1], tmax_climatologies[0],
-                    tmin_climatologies[1], tmin_climatologies[0],
-                ).values
-
-                if 'atmos_Pa' in morphed_dict:
-                    morphed_psl = morphed_dict['atmos_Pa']
-                else:
-                    psl_climatologies = assemble.calc_model_climatologies(
-                        baseline_range, target_range,
-                        _get_series(ref, 'psl', percentile),
-                        _get_series(pathway, 'psl', percentile), 'psl',
-                    )
-                    morphed_psl = procedures.morph_psl(
-                        present_psl, psl_climatologies[1], psl_climatologies[0],
-                    ).values
-                    if "Pressure" in user_variables:
-                        morphed_dict['atmos_Pa'] = morphed_psl
-
-                morphed_relhum = procedures.morph_relhum(
-                    present_relhum, present_psl, present_dbt,
-                    morphed_psl, morphed_dbt,
-                    relhum_climatologies[1], relhum_climatologies[0],
-                ).values
-
-            morphed_dict['relhum_percent'] = morphed_relhum
 
         elif variable == 'Dew Point':
-            if 'relhum_percent' in morphed_dict and 'drybulb_C' in morphed_dict:
-                morphed_dewpt = procedures.morph_dewpt(
-                    morphed_dict['drybulb_C'], morphed_dict['relhum_percent'],
-                )
-                morphed_dict['dewpoint_C'] = morphed_dewpt.values
-            else:
-                tas_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tas', percentile),
-                    _get_series(pathway, 'tas', percentile), 'tas',
-                )
-                tmax_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tasmax', percentile),
-                    _get_series(pathway, 'tasmax', percentile), 'tasmax',
-                )
-                tmin_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'tasmin', percentile),
-                    _get_series(pathway, 'tasmin', percentile), 'tasmin',
-                )
-                present_dbt = epw_object.dataframe['drybulb_C']
-                morphed_dbt = procedures.morph_dbt_year(
-                    present_dbt,
-                    tas_climatologies[1], tas_climatologies[0],
-                    tmax_climatologies[1], tmax_climatologies[0],
-                    tmin_climatologies[1], tmin_climatologies[0],
-                ).values
-                morphed_dict['drybulb_C'] = morphed_dbt
-
-                relhum_climatologies = assemble.calc_model_climatologies(
-                    baseline_range, target_range,
-                    _get_series(ref, 'huss', percentile),
-                    _get_series(pathway, 'huss', percentile), 'huss',
-                )
-                present_relhum = epw_object.dataframe['relhum_percent']
-                present_psl = epw_object.dataframe['atmos_Pa']
-
-                if 'atmos_Pa' in morphed_dict:
-                    morphed_psl = morphed_dict['atmos_Pa']
-                else:
-                    psl_climatologies = assemble.calc_model_climatologies(
-                        baseline_range, target_range,
-                        _get_series(ref, 'psl', percentile),
-                        _get_series(pathway, 'psl', percentile), 'psl',
-                    )
-                    morphed_psl = procedures.morph_psl(
-                        present_psl, psl_climatologies[1], psl_climatologies[0],
-                    ).values
-                    if "Pressure" in user_variables:
-                        morphed_dict['atmos_Pa'] = morphed_psl
-
-                morphed_relhum = procedures.morph_relhum(
-                    present_relhum, present_psl, present_dbt,
-                    morphed_psl, morphed_dbt,
-                    relhum_climatologies[1], relhum_climatologies[0],
-                ).values
-                morphed_dict['relhum_percent'] = morphed_relhum
-
-                morphed_dewpt = procedures.morph_dewpt(
-                    morphed_dict['drybulb_C'], morphed_dict['relhum_percent'],
-                )
-                morphed_dict['dewpoint_C'] = morphed_dewpt.values
-
-        elif variable == 'Pressure':
-            psl_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'psl', percentile),
-                _get_series(pathway, 'psl', percentile), 'psl',
+            morphed['dewpoint_C'] = procedures.morph_dewpt(
+                morphed['drybulb_C'], morphed['relhum_percent'],
             )
-            present_psl = epw_object.dataframe['atmos_Pa']
-            morphed_psl = procedures.morph_psl(
-                present_psl, psl_climatologies[1], psl_climatologies[0],
-            ).values
-            morphed_dict['atmos_Pa'] = morphed_psl
 
         elif variable == 'Wind':
-            vas_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'vas', percentile),
-                _get_series(pathway, 'vas', percentile), 'vas',
+            vas_base, vas_future = _climatology('vas')
+            uas_base, uas_future = _climatology('uas')
+            morphed['windspd_ms'] = procedures.morph_wspd(
+                present['windspd_ms'],
+                vas_future, vas_base,
+                uas_future, uas_base,
             )
-            uas_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'uas', percentile),
-                _get_series(pathway, 'uas', percentile), 'uas',
-            )
-            present_wspd = epw_object.dataframe['windspd_ms']
-            morphed_wspd = procedures.morph_wspd(
-                present_wspd,
-                vas_climatologies[1], vas_climatologies[0],
-                uas_climatologies[1], uas_climatologies[0],
-            ).values
-            morphed_dict['windspd_ms'] = morphed_wspd
 
         elif variable == 'Clouds and Radiation':
-            longitude = epw_object.location['longitude']
-            latitude = epw_object.location['latitude']
-            utc_offset = epw_object.location['utc_offset']
+            rsds_base, rsds_future = _climatology('rsds')
+            clt_base, clt_future = _climatology('clt')
+            longitude = location['longitude']
+            latitude = location['latitude']
+            utc_offset = location['utc_offset']
 
-            rsds_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'rsds', percentile),
-                _get_series(pathway, 'rsds', percentile), 'rsds',
+            glohor = procedures.morph_glohor(
+                present['glohorrad_Whm2'], rsds_future, rsds_base,
             )
-            clt_climatologies = assemble.calc_model_climatologies(
-                baseline_range, target_range,
-                _get_series(ref, 'clt', percentile),
-                _get_series(pathway, 'clt', percentile), 'clt',
+            difhor = procedures.calc_difhor(
+                longitude, latitude, utc_offset, glohor, present['exthorrad_Whm2'],
+            )
+            dirnor = procedures.calc_dirnor(
+                glohor, difhor, longitude, latitude, utc_offset,
+                extraterrestrial_dirnor=present['extdirrad_Whm2'],
+            )
+            totskycvr = procedures.calc_tsc(
+                present['totskycvr_tenths'], clt_future, clt_base,
+            )
+            opaqskycvr = procedures.calc_osc(
+                totskycvr, present['opaqskycvr_tenths'], present['totskycvr_tenths'],
             )
 
-            present_glohor = epw_object.dataframe['glohorrad_Whm2']
-            morphed_glohor = procedures.morph_glohor(
-                present_glohor, rsds_climatologies[1], rsds_climatologies[0],
-            ).values
-            morphed_dict['glohorrad_Whm2'] = morphed_glohor
+            morphed['glohorrad_Whm2'] = glohor
+            morphed['difhorrad_Whm2'] = difhor
+            morphed['dirnorrad_Whm2'] = dirnor
+            morphed['totskycvr_tenths'] = totskycvr
+            morphed['opaqskycvr_tenths'] = opaqskycvr
 
-            present_exthor = epw_object.dataframe['exthorrad_Whm2']
-            morphed_difhor = procedures.calc_difhor(
-                longitude, latitude, utc_offset, morphed_glohor, present_exthor,
-            ).values
-            morphed_dict['difhorrad_Whm2'] = morphed_difhor
-
-            present_dirnor = epw_object.dataframe['dirnorrad_Whm2']
-            morphed_dirnor = procedures.calc_dirnor(
-                morphed_glohor, morphed_difhor, present_dirnor,
-                longitude, latitude, utc_offset,
-            ).values
-            morphed_dict['dirnorrad_Whm2'] = morphed_dirnor
-
-            present_tsc = epw_object.dataframe['totskycvr_tenths']
-            morphed_tsc = procedures.calc_tsc(
-                present_tsc, clt_climatologies[1], clt_climatologies[0],
-            ).values
-            morphed_dict['totskycvr_tenths'] = morphed_tsc
-
-            present_osc = epw_object.dataframe['opaqskycvr_tenths']
-            morphed_osc = procedures.calc_osc(
-                morphed_tsc, present_osc, present_tsc,
-            ).values
-            morphed_dict['opaqskycvr_tenths'] = morphed_osc
-
-    for n, (k, v) in enumerate(morphed_dict.items()):
-        epw_object.dataframe[k] = v
-        if n == 0:
-            epw_object.headers['COMMENTS 2'][0] += (
-                f' morphed for {pathway} ({target_range}) with pyepwmorph'
-                f' on {datetime.datetime.now().isoformat()}: {k},'
-            )
-        else:
-            epw_object.headers['COMMENTS 2'][0] += f'{k},'
+    if morphed:
+        for column, values in morphed.items():
+            epw_object.dataframe[column] = values
+        # EPW headers are comma delimited, so the comment itself must not
+        # contain commas or it will be split across fields on the next read
+        epw_object.add_comment(
+            f" morphed for {pathway} ({target_range[0]}-{target_range[1]}) with pyepwmorph"
+            f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]"
+        )
 
     return epw_object
 
@@ -457,6 +332,7 @@ def morphing_workflow(
     data_source="cmip6",
     custom_data=None,
     reference_scenario=None,
+    time_slices=None,
     # backward-compat alias
     future_years=None,
 ):
@@ -472,7 +348,7 @@ def morphing_workflow(
     epw_file : str
         Path to the base EPW file.
     user_variables : list[str]
-        Variables to morph.
+        Variables to morph.  Dependencies are added automatically.
     user_pathways : list[str]
         Scenario labels.
     percentiles : list[int]
@@ -493,6 +369,8 @@ def morphing_workflow(
         Nested dict for custom data (see ``MorphConfig``).
     reference_scenario : str or None
         Baseline scenario key.
+    time_slices : dict or None
+        Optional per-pathway ``(start, end)`` temporal bounds for CMIP6 data.
     future_years : list[int] or None
         Deprecated alias for *target_years*.
 
@@ -531,6 +409,7 @@ def morphing_workflow(
             config_object.epw.location['longitude'],
             config_object.epw.location['latitude'],
             config_object.percentiles,
+            time_slices=time_slices,
         )
 
     # --- Morph for each target year x pathway x percentile ---
@@ -548,7 +427,7 @@ def morphing_workflow(
                 percentile_key = str(percentile)
                 morphed_data = morph_epw(
                     config_object.epw,
-                    config_object.user_variables,
+                    config_object.resolved_variables,
                     config_object.baseline_range,
                     target_range,
                     year_model_dict,

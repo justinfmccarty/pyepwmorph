@@ -1,24 +1,28 @@
-# coding=utf-8
 """
 General utility scripts used throughout the package
 """
-import math
+import calendar
+import logging
 
 import numpy as np
 import pandas as pd
-import calendar
-import warnings
 
-warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
 __author__ = "Justin McCarty"
-__copyright__ = "Copyright 2023"
+__copyright__ = "Copyright 2023-2026"
 __credits__ = ["Justin McCarty"]
 __license__ = "MIT"
 
 __maintainer__ = "Justin McCarty"
 __email__ = "mccarty.justin.f@gmail.com"
 __status__ = "Production"
+
+#: Variables required from a climate model for every supported morph.
+CMIP6_VARIABLES = ['tas', 'tasmax', 'tasmin', 'clt', 'psl', 'pr', 'huss', 'vas', 'uas', 'rsds']
+
+#: Shared Socioeconomic Pathway experiment IDs supported by the package.
+CMIP6_SCENARIOS = ['ssp126', 'ssp245', 'ssp370', 'ssp585']
 
 
 def min_max_mean_means(timeseries, first_resample="D", second_resample="ME"):
@@ -31,17 +35,17 @@ def min_max_mean_means(timeseries, first_resample="D", second_resample="ME"):
         a timeseries, likely annual hourly (8760,), of values that you want statistics for
     first_resample : string (default: 'D')
         the first resample resolution to operate at
-    second_resample : string (default: 'M')
+    second_resample : string (default: 'ME')
         the second resample resolution to operate at
 
     Returns
     -------
-    tupple of three pd.Series with datetime index
+    tuple of three pd.Series
         the max, min, and mean
 
     Examples
     --------
-    >>> min_max_mean_means(data_series, first_resample="D", second_resample="M")
+    >>> min_max_mean_means(data_series, first_resample="D", second_resample="ME")
     """
     series_max = timeseries.resample(first_resample).max().resample(second_resample).mean().reset_index(drop=True)
     series_min = timeseries.resample(first_resample).min().resample(second_resample).mean().reset_index(drop=True)
@@ -51,8 +55,8 @@ def min_max_mean_means(timeseries, first_resample="D", second_resample="ME"):
 
 def absolute_delta(future, historical):
     """
-    A very simple function for calculating the absolute delta but sometimes I get confused about if
-        I put future in front historical or the other way around
+    Calculate the absolute change between a future and a historical value.
+
     Parameters
     ----------
     future : numerical
@@ -63,7 +67,7 @@ def absolute_delta(future, historical):
     Returns
     -------
     numerical
-        the difference between the two
+        ``future - historical``, in the units of the inputs
 
     Examples
     --------
@@ -71,10 +75,15 @@ def absolute_delta(future, historical):
     """
     return future - historical
 
+
 def relative_delta(future, historical):
     """
-    A very simple function for calcualting the relative (fractional) delta but sometimes I get confused about if
-        I put future in front historical or the other way around
+    Calculate the relative change between a future and a historical value.
+
+    Note that this returns a *ratio*, not a percentage: an unchanged value
+    gives 1.0 and a 20% increase gives 1.2.  Morphing stretch factors use
+    this ratio directly.
+
     Parameters
     ----------
     future : numerical
@@ -85,7 +94,7 @@ def relative_delta(future, historical):
     Returns
     -------
     numerical
-        the difference between the two
+        ``future / historical``
 
     Examples
     --------
@@ -93,11 +102,11 @@ def relative_delta(future, historical):
     """
     return future / historical
 
-def pandas_slice_year(data, start_year, end_year):
 
+def pandas_slice_year(data, start_year, end_year):
     """
-    A very simple function but sometimes I get confused about if
-        I put future in front historical or the other way around
+    Slice a datetime-indexed Series to an inclusive range of years.
+
     Parameters
     ----------
     data : pandas.Series
@@ -109,8 +118,8 @@ def pandas_slice_year(data, start_year, end_year):
 
     Returns
     -------
-    numerical
-        the difference between the two
+    pandas.Series
+        the subset of *data* falling inside the year range
 
     Examples
     --------
@@ -119,15 +128,17 @@ def pandas_slice_year(data, start_year, end_year):
     >>> baseline_period = (1960,1990)
     >>> future_period = (2050,2060)
     >>> values = np.linspace(0,1799,150*12,dtype=int)
-    >>> all_months = pd.date_range("01 January 1951",end="01 January 2101",freq='M')
+    >>> all_months = pd.date_range("01 January 1951",end="01 January 2101",freq='MS')
     >>> climate_data = pd.Series(values,index=all_months)
     >>> historical_data = pandas_slice_year(climate_data, baseline_period[0], baseline_period[1])
     """
     return data[(data.index.year >= start_year) & (data.index.year <= end_year)]
 
+
 def monthly_means(data):
     """
     For a multi-year monthly dataset group by month and take the mean for each month
+
     Parameters
     ----------
     data : pandas.Series
@@ -139,6 +150,34 @@ def monthly_means(data):
         a Series of 12 values which represent the mean for each month
     """
     return data.groupby(data.index.month).mean()
+
+
+def as_array(data, length):
+    """
+    Coerce list/ndarray/Series input into a flat float array of a known length.
+
+    Parameters
+    ----------
+    data : list, np.ndarray, or pd.Series
+        the values to coerce
+    length : int
+        the number of values that *data* must contain
+
+    Returns
+    -------
+    np.ndarray
+        a one-dimensional float array of *length* values
+
+    Raises
+    ------
+    ValueError
+        If *data* does not hold exactly *length* values.
+    """
+    values = np.asarray(data, dtype=float).ravel()
+    if values.size != length:
+        raise ValueError(f"Expected {length} values, got {values.size}")
+    return values
+
 
 def zip_month_data(data):
     """
@@ -158,19 +197,7 @@ def zip_month_data(data):
     --------
     >>> zip_month_data(np.ones(12))
     """
-    months = list(range(1, 12 + 1, 1))
-    if type(data) is list:
-        pass
-    elif type(data) is np.ndarray:
-        data = data.tolist()
-    elif type(data) is pd.core.series.Series:
-        data = data.tolist()
-    else:
-        print("Data must be in list, np.ndarray, or pd.Series format. shape==(12,). Attempting process")
-
-    return dict(zip(months, data))
-
-
+    return dict(zip(range(1, 13), as_array(data, 12).tolist()))
 
 
 def zip_day_data(data):
@@ -180,7 +207,7 @@ def zip_day_data(data):
     Parameters
     ----------
     data : list, np.ndarray, or pd.Series
-        an array of data with one value for each month of the year
+        an array of data with one value for each day of the year
 
     Returns
     -------
@@ -191,17 +218,51 @@ def zip_day_data(data):
     --------
     >>> zip_day_data(np.ones(365))
     """
-    days = list(range(1, 365 + 1, 1))
-    if type(data) is list:
-        pass
-    elif type(data) is np.ndarray:
-        data = data.tolist()
-    elif type(data) is pd.core.series.Series:
-        data = data.tolist()
-    else:
-        print("Data must be in list, np.ndarray, or pd.Series format. shape==(365,). Attempting process")
+    return dict(zip(range(1, 366), as_array(data, 365).tolist()))
 
-    return dict(zip(days, data))
+
+def month_factors(index, monthly_values):
+    """
+    Broadcast twelve monthly values onto every timestamp of a datetime index.
+
+    This replaces the per-row lookups that the morphing procedures used to do
+    with a single vectorised take.
+
+    Parameters
+    ----------
+    index : pd.DatetimeIndex
+        the index to broadcast onto, typically an annual hourly (8760,) index
+    monthly_values : list, np.ndarray, or pd.Series
+        twelve values ordered January to December
+
+    Returns
+    -------
+    np.ndarray
+        an array the same length as *index*
+    """
+    values = as_array(monthly_values, 12)
+    return values[np.asarray(index.month) - 1]
+
+
+def day_factors(index, daily_values):
+    """
+    Broadcast 365 daily values onto every timestamp of a datetime index.
+
+    Parameters
+    ----------
+    index : pd.DatetimeIndex
+        the index to broadcast onto, typically an annual hourly (8760,) index
+    daily_values : list, np.ndarray, or pd.Series
+        365 values ordered by day of year
+
+    Returns
+    -------
+    np.ndarray
+        an array the same length as *index*
+    """
+    values = as_array(daily_values, 365)
+    return values[np.asarray(index.dayofyear) - 1]
+
 
 def uas_vas_2_sfcwind(uas, vas, calm_wind_thresh=0.5, out='SPD'):
     """
@@ -211,15 +272,15 @@ def uas_vas_2_sfcwind(uas, vas, calm_wind_thresh=0.5, out='SPD'):
 
     Parameters
     ----------
-    uas : tuple (int,int)
+    uas : numerical
         Eastward wind activity
-    vas : tuple (int,int)
+    vas : numerical
         Northward wind activity
-    calm_wind_thresh : float (Default: o.5)
+    calm_wind_thresh : float (Default: 0.5)
         The threshold under which winds are considered "calm" and for which the direction
             is set to 0. On the Beaufort scale, calm winds are defined as < 0.5 m/s.
     out : string (Default: 'SPD')
-        control statement for directing the output, either wind spped ('SPD') or wind direction ('DIR')
+        control statement for directing the output, either wind speed ('SPD') or wind direction ('DIR')
             we assume direction to never change
 
     Returns
@@ -228,16 +289,12 @@ def uas_vas_2_sfcwind(uas, vas, calm_wind_thresh=0.5, out='SPD'):
         calculated wind speed (m s-1) or wind direction (degrees)
             Direction from which the wind blows, following the meteorological convention where
             360 stands for North and 0 for calm winds.
-
-    Examples
-    --------
-    >>>
     """
-    #
-    # adapted for no xarray
-
     # Wind speed is the hypotenuse of "uas" and "vas"
     wind = np.hypot(uas, vas)
+
+    if out == 'SPD':
+        return wind
 
     # Calculate the angle
     windfromdir_math = np.degrees(np.arctan2(vas, uas))
@@ -245,211 +302,106 @@ def uas_vas_2_sfcwind(uas, vas, calm_wind_thresh=0.5, out='SPD'):
     # Convert the angle from the mathematical standard to the meteorological standard
     windfromdir = (270 - windfromdir_math) % 360.0
 
-    # According to the meteorological standard, calm winds must have a direction of 0°
-    # while northerly winds have a direction of 360°
+    # According to the meteorological standard, calm winds must have a direction of 0 degrees
+    # while northerly winds have a direction of 360 degrees
     # On the Beaufort scale, calm winds are defined as < 0.5 m/s
-    windfromdir = np.where(windfromdir.round() == 0, 360, windfromdir)
-    windfromdir = np.where(wind < calm_wind_thresh, 0, windfromdir)
-    if out == 'SPD':
-        return wind
-    elif out == 'DIR':
-        return windfromdir
+    windfromdir = np.where(np.round(windfromdir) == 0, 360, windfromdir)
+    return np.where(wind < calm_wind_thresh, 0, windfromdir)
 
 
 def ts_8760(year=2023, tz=None):
     """
     Uses pandas to create an annual hourly datetime series with or without timezone
 
+    Leap years are handled by dropping 29 February so the index is always
+    8760 entries long.
+
     Parameters
     ----------
     year : int (Default: 2023)
         the year for your datetime index
-    tz : str (Default: None)
-        a timezone to match your datetime to
+    tz : str or datetime.tzinfo (Default: None)
+        a timezone to localise the index to.  Use a fixed UTC offset rather
+        than a named zone to keep the index free of daylight saving jumps.
 
     Returns
     -------
-    pd.Series
-        datetime series for hourly annual
+    pd.DatetimeIndex
+        datetime index for hourly annual
     """
-
-    if tz is None:
-        index = pd.date_range(start=f"01-01-{year} 00:00", end=f"12-31-{year} 23:00", freq="h")
-    else:
-        index = pd.date_range(start=f"01-01-2022 00:30", end=f"12-31-2022 23:30", freq="h", tz=tz)
+    index = pd.date_range(
+        start=f"{year}-01-01 00:00", end=f"{year}-12-31 23:00", freq="h", tz=tz,
+    )
     if calendar.isleap(year):
         index = index[~((index.month == 2) & (index.day == 29))]
     return index
 
+
 def calc_period(year, period):
+    """
+    Centre a period of the same length as *period* on *year*.
+
+    Parameters
+    ----------
+    year : int
+        the target year to centre the period on
+    period : tuple (int, int)
+        the baseline period whose length should be reused
+
+    Returns
+    -------
+    tuple (int, int)
+        the start and end year of the target period
+    """
     extent = int(period[1]) - int(period[0])
-    return int(year - (extent/2)), int(year + (extent/2))
+    return int(year - (extent / 2)), int(year + (extent / 2))
 
 
-def available_models():
+def available_models(scenarios=None, variables=None):
+    """
+    List the CMIP6 source IDs that carry every required variable in every scenario.
+
+    Parameters
+    ----------
+    scenarios : list of str or None
+        Experiment IDs to check.  Defaults to the four supported SSPs.
+    variables : list of str or None
+        Variable IDs that a model must provide.  Defaults to the full set the
+        package can morph with.
+
+    Returns
+    -------
+    list of str
+        sorted model source IDs common to all requested scenarios
+
+    Examples
+    --------
+    >>> available_models()
+    """
     import intake
+
+    scenarios = list(scenarios) if scenarios else list(CMIP6_SCENARIOS)
+    variables = list(variables) if variables else list(CMIP6_VARIABLES)
+
     esm_data = intake.open_esm_datastore("https://storage.googleapis.com/cmip6/pangeo-cmip6.json")
-    esm_data_df = esm_data.df
-    
-    scenarios = ['ssp126', 'ssp245', 'ssp370', 'ssp585']
+    catalog = esm_data.df
 
-    variables_needed = ['tas','tasmax','tasmin','clt','psl','pr','huss','vas','uas','rsds']
+    monthly = catalog[
+        (catalog['activity_id'] == 'ScenarioMIP')
+        & (catalog['member_id'] == 'r1i1p1f1')
+        & (catalog['table_id'] == 'Amon')
+    ]
 
-    result_dict = {}
-
+    model_sets = []
     for scenario in scenarios:
-        # print(f"Scenario: {scenario}")
-        result_dict[scenario] = []
-        esm_data_df_sub_scenario = esm_data_df[esm_data_df['experiment_id'] == scenario]
-        sources = esm_data_df_sub_scenario['source_id'].unique()
-        for source in sources:
-            # count = len(esm_data_df[(esm_data_df['experiment_id'] == scenario) & (esm_data_df['source_id'] == source)])
-            # if count > 0:
-            #     print(f"  Source: {source}, Count: {count}")
+        scenario_rows = monthly[monthly['experiment_id'] == scenario]
+        complete = {
+            source
+            for source, rows in scenario_rows.groupby('source_id')
+            if set(variables).issubset(set(rows['variable_id']))
+        }
+        model_sets.append(complete)
 
-            matching_data = esm_data_df[(esm_data_df['activity_id']=='ScenarioMIP') & (esm_data_df['experiment_id']==scenario) 
-                                    & (esm_data_df['member_id']=='r1i1p1f1') & (esm_data_df['table_id']=='Amon')
-                                    & (esm_data_df['source_id']==source)]
-            grid_type = matching_data['grid_label'].unique()
-            variables = matching_data['variable_id'].unique()
-            if all(item in variables for item in variables_needed):
-                # print(f"  Source: {source}, Grid types: {grid_type}")
-                result_dict[scenario].append(source)
-                
-    # Convert lists to sets for each scenario
-    model_sets = [set(result_dict[scenario]) for scenario in scenarios]
-
-    # Find the intersection of all sets using set.intersection(*sets)
-    common_models = set.intersection(*model_sets)
-
-    print(f"Models common across all scenarios ({len(common_models)}):")
-    for model in sorted(common_models):
-        print(f"- {model}")
-        
-    return list(common_models)
-
-
-
-# def saturation_vapor_pressure(present_dbt):
-#     """Saturated vapor pressure (Pa) at a given dry bulb temperature (K).
-#
-#         This function accounts for the different behavior above vs. below
-#         the freezing point of water.
-#
-#         Args:
-#             t_kelvin: Dry bulb temperature (K).
-#
-#         Returns:
-#             Saturated vapor pressure (Pa).
-#
-#         Note:
-#             [1] ASHRAE Handbook - Fundamentals (2017) ch. 1 eqn. 5 and 6
-#
-#             [2] Meyer et al., (2019). PsychroLib: a library of psychrometric
-#             functions to calculate thermodynamic properties of air. Journal of
-#             Open Source Software, 4(33), 1137, https://doi.org/10.21105/joss.01137
-#             https://github.com/psychrometrics/psychrolib/blob/master/src/python/psychrolib.py
-#         """
-#
-#     t_kelvin = present_dbt + 273.15
-#     if (t_kelvin <= 273.15):  # saturation vapor pressure below freezing
-#         ln_p_ws = -5.6745359E+03 / t_kelvin + 6.3925247 - 9.677843E-03 * t_kelvin + \
-#                   6.2215701E-07 * t_kelvin ** 2 + 2.0747825E-09 * math.pow(t_kelvin, 3) - \
-#                   9.484024E-13 * math.pow(t_kelvin, 4) + 4.1635019 * math.log(t_kelvin)
-#     else:  # saturation vapor pressure above freezing
-#         ln_p_ws = -5.8002206E+03 / t_kelvin + 1.3914993 - 4.8640239E-02 * t_kelvin + \
-#                   4.1764768E-05 * t_kelvin ** 2 - 1.4452093E-08 * math.pow(t_kelvin, 3) + \
-#                   6.5459673 * math.log(t_kelvin)
-#     return math.exp(ln_p_ws)
-#
-# def _d_ln_p_ws(db_temp):
-#     """Helper function for the derivative of the log of saturation vapor pressure.
-#     # originally implmented in Ladybug
-#     # https: // www.ladybug.tools / ladybug / docs / _modules / ladybug / psychrometrics.html
-#
-#     Args:
-#         db_temp : Dry bulb temperature (C).
-#
-#     Returns:
-#         Derivative of natural log of vapor pressure of saturated air in Pa.
-#     """
-#     T = db_temp + 273.15  # temperature in kelvin
-#     if db_temp <= 0.:
-#         d_ln_p_ws = 5.6745359E+03 / math.pow(T, 2) - 9.677843E-03 + 2 * \
-#             6.2215701E-07 * T + 3 * 2.0747825E-09 * math.pow(T, 2) - 4 * \
-#             9.484024E-13 * math.pow(T, 3) + 4.1635019 / T
-#     else:
-#         d_ln_p_ws = 5.8002206E+03 / math.pow(T, 2) - 4.8640239E-02 + 2 * \
-#             4.1764768E-05 * T - 3 * 1.4452093E-08 * math.pow(T, 2) + \
-#             6.5459673 / T
-#     return d_ln_p_ws
-#
-# def dew_pt_dbt_rh(dbt, relhum):
-#     # originally implmented in Ladybug
-#     # https: // www.ladybug.tools / ladybug / docs / _modules / ladybug / psychrometrics.html
-#     p_ws = saturation_vapor_pressure(dbt + 273.15)  # saturation pressure
-#     p_w = p_ws * (relhum / 100)  # partial pressure
-#
-#     # We use NR to approximate the solution.
-#     td = dbt  # First guess for dew point temperature (solved for iteratively)
-#     try:
-#         ln_vp = math.log(p_w)  # partial pressure of water vapor in moist air
-#     except ValueError:  # relative humidity of 0, return absolute zero
-#         return -273.15
-#
-#     index = 1
-#     while True:
-#         td_iter = td  # td used in NR calculation
-#         ln_vp_iter = math.log(saturation_vapor_pressure(td_iter + 273.15))
-#         d_ln_vp = _d_ln_p_ws(td_iter)  # Derivative of function, calculated analytically
-#         td = td_iter - (ln_vp_iter - ln_vp) / d_ln_vp  # New estimate
-#
-#         if ((math.fabs(td - td_iter) <= 0.1)):  # 0.1 is degree C tolerance
-#             break  # solution has been found
-#         if (index > 100):  # 100 is the max iterations (usually only 3-5 are needed)
-#             break  # max number of iterations has been exceeded
-#         index = index + 1
-#
-#     return min(td, dbt)
-#
-# def wet_bulb_from_db_rh(db_temp, rel_humid, b_press=101325):
-#     """Wet bulb temperature (C) from air temperature (C) and relative humidity (%).
-#
-#     Args:
-#         db_temp: Dry bulb temperature (C).
-#         rel_humid: Relative humidity (%).
-#         b_press: Air pressure (Pa). Default is pressure at sea level (101325 Pa).
-#
-#     Returns:
-#         Wet bulb temperature (C).
-#
-#     Note:
-#         [1] ASHRAE Handbook - Fundamentals (2017) ch. 1 eqn 33 and 35
-#
-#         [2] Meyer et al., (2019). PsychroLib: a library of psychrometric
-#         functions to calculate thermodynamic properties of air. Journal of
-#         Open Source Software, 4(33), 1137, https://doi.org/10.21105/joss.01137
-#         https://github.com/psychrometrics/psychrolib/blob/master/src/python/psychrolib.py
-#     """
-#     humid_ratio = humid_ratio_from_db_rh(db_temp, rel_humid, b_press)
-#     # Initial guesses
-#     wb_temp_sup = db_temp
-#     wb_temp_inf = dew_point_from_db_rh(db_temp, rel_humid)
-#     wb_temp = (wb_temp_inf + wb_temp_sup) / 2
-#
-#     index = 1
-#     while ((wb_temp_sup - wb_temp_inf) > 0.1):  # 0.1 is degree C tolerance
-#         # Compute humidity ratio at temperature Tstar
-#         w_star = humid_ratio_from_db_wb(db_temp, wb_temp, b_press)
-#         # Get new bounds
-#         if w_star > humid_ratio:
-#             wb_temp_sup = wb_temp
-#         else:
-#             wb_temp_inf = wb_temp
-#         # New guess of wet bulb temperature
-#         wb_temp = (wb_temp_sup + wb_temp_inf) / 2
-#         if index >= 100:
-#             break  # 100 is the max iterations (usually only 3-5 are needed)
-#         index = index + 1
-#     return wb_temp
-
+    common_models = sorted(set.intersection(*model_sets)) if model_sets else []
+    logger.info("Models common across %s: %s", scenarios, common_models)
+    return common_models

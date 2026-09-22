@@ -56,7 +56,7 @@ main()
   - **Worst Case Scenario** (SSP5-8.5)
 
 #### Future Projections
-- **Future Years**: Comma-separated list (e.g., `2030,2050,2070,2090`)
+- **Target Years**: Comma-separated list (e.g., `2030,2050,2070,2090`)
 - **Percentiles**: Select ensemble percentiles (1st, 5th, 10th, 25th, 50th, 75th, 90th, 95th, 99th)
 
 #### Variables to Morph
@@ -85,7 +85,7 @@ Select which climate variables to modify:
 - **Total Files**: Number of cached entries
 - **Total Size**: Current cache size in MB
 - **Cache Usage**: Visual progress bar showing usage percentage
-- **Max Cache Size**: Size limit (default: 50 MB)
+- **Max Cache Size**: Size limit (default: 500 MB, override with `PYEPWMORPH_CACHE_MAX_MB`)
 
 #### Cache Actions
 - **Clear Cache**: Remove all cached data (with confirmation)
@@ -105,7 +105,7 @@ Information about how the cache works and what it stores.
 
 Morphed EPW files are saved with the naming convention:
 ```
-{future_year}_{pathway}_{percentile}.epw
+{target_year}_{pathway}_{percentile}.epw
 ```
 
 **Pathway Codes:**
@@ -189,7 +189,7 @@ Make sure you've selected at least one option from each required section.
 First-time processing downloads climate data. Monitor the log for progress. Subsequent runs for the same location are much faster due to caching.
 
 ### Cache fills up quickly
-The cache has a 50 MB limit and auto-cleans old files. Clear manually from Cache Management tab if needed.
+The cache has a 500 MB limit and auto-cleans the oldest files. Set `PYEPWMORPH_CACHE_MAX_MB` to change the cap, or clear it manually from the Cache Management tab.
 
 ### GUI becomes unresponsive
 Processing runs in background thread, but very heavy log output can slow the GUI. This is normal; wait for completion.
@@ -221,25 +221,7 @@ run_gui.py               # Launcher script (use this to start GUI)
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.9+
 - tkinter (usually included with Python)
 - pyepwmorph package with all dependencies
 - Internet connection (for downloading climate data)
-
-## Version History
-
-### v2.0 (Current)
-- Tabbed interface
-- Upper Middle Scenario (SSP3-7.0) support
-- Cache management tab
-- Model source selection
-- Quick presets
-- Enhanced tooltips and descriptions
-- Improved logging and status indicators
-
-### v1.0 (dev_gui.py)
-- Initial single-window GUI
-- Basic morphing functionality
-- Three SSP scenarios
-- Simple cache clearing
-

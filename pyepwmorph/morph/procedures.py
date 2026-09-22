@@ -1,4 +1,3 @@
-# coding=utf-8
 """
 Container for all of the individual morphing calculations which can be traced back to:
 
@@ -8,17 +7,42 @@ Container for all of the individual morphing calculations which can be traced ba
         55 514–524 ISSN 0960-1481 URL https://www.sciencedirect.com/science/article/pii/S0960148113000232
 
 """
-import math
-
 import numpy as np
 import pandas as pd
 
-from pyepwmorph.tools import utilities as morph_utils
-from pyepwmorph.tools import ladybug_psychrometrics as psych
+from pyepwmorph.tools import psychrometrics as psych
 from pyepwmorph.tools import solar as morph_solar_utils
-import warnings
+from pyepwmorph.tools import utilities as morph_utils
 
-warnings.filterwarnings("ignore")
+#: Solar altitude (degrees) below which direct normal irradiance is set to zero.
+#: Dividing the horizontal beam component by sin(altitude) is numerically
+#: unstable near the horizon, so the low sun hours are zeroed instead.
+MIN_SOLAR_ALTITUDE = 2.0
+
+#: Solar constant (W/m2), the hard ceiling for direct normal irradiance.
+SOLAR_CONSTANT = 1367.0
+
+
+def _index_of(*candidates):
+    """Return the first DatetimeIndex found among the candidate series."""
+    for candidate in candidates:
+        index = getattr(candidate, "index", None)
+        if isinstance(index, pd.DatetimeIndex):
+            return index
+    return None
+
+
+def _year_of(index):
+    """Return the year of a DatetimeIndex, or the default solar year."""
+    if index is None or len(index) == 0:
+        return morph_solar_utils.DEFAULT_SOLAR_YEAR
+    return int(index[0].year)
+
+
+def _as_series(values, index, name, decimals=2):
+    """Round an array and wrap it in a named Series carrying *index*."""
+    rounded = np.round(np.asarray(values, dtype=float), decimals)
+    return pd.Series(rounded, index=index, name=name)
 
 
 def shift(present, delta):
@@ -40,16 +64,17 @@ def shift_stretch(present, delta, scaling_factor, temporal_mean):
     delta : float
         the absolute change in the monthly mean value of the variable for the month (future - historical)
     scaling_factor : float
-        the scaling factor to be applied, in th case of temperature it is -
+        the scaling factor to be applied, in the case of temperature it is -
          (absolute_delta of tasmax for a temporal slice - absolute_delta of tasmin for a temporal slice)
          ----------------------------------------------------------------------------
-         (present dat tasmax for a tmepral slice - present dat tasmin for a tmepral slice)
+         (present day tasmax for a temporal slice - present day tasmin for a temporal slice)
     temporal_mean : float
         the mean of the present day values for a given temporal slice (typically monthly)
 
     Returns
     -------
-
+    float
+        the morphed value
 
     Examples
     --------
@@ -59,7 +84,8 @@ def shift_stretch(present, delta, scaling_factor, temporal_mean):
     return present + delta + scaling_factor * (present - temporal_mean)
 
 
-def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baseline_tasmax, future_tasmin, baseline_tasmin):
+def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baseline_tasmax, future_tasmin,
+                   baseline_tasmin):
     """
     Drybulb temperature morph requires a combination of shift and stretch
 
@@ -93,7 +119,6 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
         an annual monthly climatology (12,) pandas series with the baseline DBT min values
         this is typically from assemble.calc_model_climatologies function
 
-
     Returns
     -------
     pd.Series
@@ -101,113 +126,99 @@ def morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baselin
 
     Examples
     --------
-    >>> morph_dbt()
+    >>> morph_dbt_year(present_dbt, future_tas, baseline_tas, future_tasmax, baseline_tasmax, future_tasmin, baseline_tasmin)
     """
-    dbt_max_mean, dbt_min_mean, dbt_mean = morph_utils.min_max_mean_means(present_dbt)
-    tas_delta = morph_utils.absolute_delta(future_tas, baseline_tas).values
-    tasmin_delta = morph_utils.absolute_delta(future_tasmin, baseline_tasmin).values
-    tasmax_delta = morph_utils.absolute_delta(future_tasmax, baseline_tasmax).values
+    index = present_dbt.index
 
-    dbt_delta = morph_utils.zip_month_data(tas_delta)
+    dbt_max_mean, dbt_min_mean, dbt_mean = (
+        morph_utils.as_array(series, 12) for series in morph_utils.min_max_mean_means(present_dbt)
+    )
+    tas_delta = morph_utils.absolute_delta(
+        morph_utils.as_array(future_tas, 12), morph_utils.as_array(baseline_tas, 12),
+    )
+    tasmin_delta = morph_utils.absolute_delta(
+        morph_utils.as_array(future_tasmin, 12), morph_utils.as_array(baseline_tasmin, 12),
+    )
+    tasmax_delta = morph_utils.absolute_delta(
+        morph_utils.as_array(future_tasmax, 12), morph_utils.as_array(baseline_tasmax, 12),
+    )
 
-    dbt_scale = (tasmax_delta - tasmin_delta) / (dbt_max_mean - dbt_min_mean)
-    dbt_scale = morph_utils.zip_month_data(dbt_scale)
-    dbt_mean = morph_utils.zip_month_data(dbt_mean)
+    diurnal_range = dbt_max_mean - dbt_min_mean
+    monthly_scale = np.divide(
+        tasmax_delta - tasmin_delta, diurnal_range,
+        out=np.zeros_like(diurnal_range), where=diurnal_range != 0,
+    )
 
-    df = pd.DataFrame(present_dbt.rename("drybulb_C"))
-    df['month'] = df.index.month
+    delta = morph_utils.month_factors(index, tas_delta)
+    scale = morph_utils.month_factors(index, monthly_scale)
+    mean = morph_utils.month_factors(index, dbt_mean)
 
-    morphed_dbt = df.apply(lambda x: shift_stretch(x['drybulb_C'],
-                                                   dbt_delta[x['month']],
-                                                   dbt_scale[x['month']],
-                                                   dbt_mean[x['month']]),
-                           axis=1).astype(float)
-    return round(morphed_dbt, 2).rename("drybulb_C")
+    morphed_dbt = shift_stretch(present_dbt.to_numpy(dtype=float), delta, scale, mean)
+    return _as_series(morphed_dbt, index, "drybulb_C")
 
 
 def morph_relhum(present_relhum, present_psl, present_dbt, future_psl, future_dbt, future_huss, baseline_huss):
     """
-    Relative humidity morph requires a stretch
+    Relative humidity morph is a stretch applied in specific humidity space
+
+    The present day state is converted to specific humidity, stretched by the
+    ratio of future to baseline modelled specific humidity, and converted back
+    to relative humidity against the morphed temperature and pressure.
 
     Parameters
     ----------
     present_relhum : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the present day relative humidity as perecentage (75.1)
+        an hourly annual (8760,) pandas series with the present day relative humidity as percentage (75.1)
             and a datetime index (this typically comes from the EPW)
 
+    present_psl : pd.Series with datetimeindex
+        an hourly annual (8760,) pandas series with the present day atmospheric pressure in Pa
+
+    present_dbt : pd.Series with datetimeindex
+        an hourly annual (8760,) pandas series with the present day drybulb temperature in C
+
+    future_psl : array_like
+        an hourly annual (8760,) array of the morphed atmospheric pressure in Pa
+
+    future_dbt : array_like
+        an hourly annual (8760,) array of the morphed drybulb temperature in C
+
     future_huss : pd.Series
-        an annual monthly climatology (12,) pandas series with the future specific humidity as perecentage (75.1)
-            this is typically from assemble.calc_model_climatologies function
+        an annual monthly climatology (12,) pandas series with the future specific humidity
 
     baseline_huss : pd.Series
-        an annual monthly climatology (12,) pandas series with the baseline specific humidity as perecentage (75.1)
-            this is typically from assemble.calc_model_climatologies function
+        an annual monthly climatology (12,) pandas series with the baseline specific humidity
 
     Returns
     -------
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    # requires future_ and historical_ inputs to be monthly climatologies
-    huss_delta = morph_utils.relative_delta(future_huss, baseline_huss).values
-    huss_delta = 1 + (huss_delta / 100)
-    huss_change = morph_utils.zip_month_data(huss_delta)
+    index = present_relhum.index
 
-    df = pd.DataFrame(present_relhum.rename("relhum_percent"))
-    df['atmos_Pa'] = present_psl
-    df['drybulb_C'] = present_dbt
-    df['month'] = df.index.month
-    df['dewpoint'] = df.apply(lambda x: psych.dew_point_from_db_rh(x['drybulb_C'], x['relhum_percent']),axis=1)
+    # a ratio, where an unchanged specific humidity gives 1.0
+    huss_ratio = morph_utils.relative_delta(
+        morph_utils.as_array(future_huss, 12), morph_utils.as_array(baseline_huss, 12),
+    )
+    stretch_factor = morph_utils.month_factors(index, huss_ratio)
 
-    def morph_huss_to_relhum(present_dbt_C, present_relhum, present_atmos_Pa, huss_delta_month, future_atmos_Pa, future_dbt_C):
+    present_humid_ratio = psych.humid_ratio_from_db_rh(
+        present_dbt.to_numpy(dtype=float),
+        present_relhum.to_numpy(dtype=float),
+        present_psl.to_numpy(dtype=float),
+    )
+    present_spec_humid = psych.specific_humidity_from_humid_ratio(present_humid_ratio)
 
-        # part 1 calculate present day specific humidity
-        present_dbt_K = present_dbt_C + 273.15
-        present_sat_pressure_water_vapor_Pa = psych.saturated_vapor_pressure(present_dbt_K)
-        present_sat_pressure_water_vapor_kPa = present_sat_pressure_water_vapor_Pa / 1000
+    # specific humidity has to stay strictly inside (0, 1) to be invertible
+    future_spec_humid = np.clip(stretch(present_spec_humid, stretch_factor), 1e-9, 1 - 1e-9)
+    future_humid_ratio = psych.humid_ratio_from_specific_humidity(future_spec_humid)
 
-        present_wet_bulb_C = psych.wet_bulb_from_db_rh(present_dbt_C, present_relhum, present_atmos_Pa)
-
-        present_atmos_kPa = present_atmos_Pa / 1000
-
-        if present_wet_bulb_C >= 0:
-            A = 6.66e-4
-        else:
-            A = 5.94e-4
-
-        present_partial_pressure_kPa = present_sat_pressure_water_vapor_kPa - present_atmos_kPa * A * (present_dbt_C - present_wet_bulb_C)
-        present_humidity_ratio_kg_kg = 0.62198 * (present_partial_pressure_kPa / (present_atmos_kPa - present_partial_pressure_kPa))
-        present_spec_hum_kg_kg = present_humidity_ratio_kg_kg / (1 + present_humidity_ratio_kg_kg)
-
-        # part 2 morph specific humidity
-        stretch_factor = 1 + (huss_delta_month / 100)
-        morphed_spec_hum_kg_kg = present_spec_hum_kg_kg * stretch_factor
-
-        # part 3 convert back to relative humidity
-        future_humidity_ratio_kg_kg = morphed_spec_hum_kg_kg / (1 - morphed_spec_hum_kg_kg)
-        future_atmos_kPa = future_atmos_Pa / 1000
-        future_partial_pressure_water_vapor_kPa = (future_humidity_ratio_kg_kg * future_atmos_kPa) / (0.62198 + future_humidity_ratio_kg_kg)
-        future_dbt_K = future_dbt_C + 273.15
-        future_sat_pressure_water_vapor_Pa = psych.saturated_vapor_pressure(future_dbt_K)
-        future_sat_pressure_water_vapor_kPa = future_sat_pressure_water_vapor_Pa / 1000
-        morphed_relhum = future_partial_pressure_water_vapor_kPa / future_sat_pressure_water_vapor_kPa
-        return morphed_relhum * 100
-
-
-
-    df['fut_atmos_Pa'] = future_psl
-    df['fut_drybulb_C'] = future_dbt
-    morphed_relhum = df.apply(lambda x: morph_huss_to_relhum(x['drybulb_C'],
-                                                                 x['relhum_percent'],
-                                                                 x['atmos_Pa'],
-                                                                 huss_change[x['month']],
-                                                                 x['fut_atmos_Pa'],
-                                                                 x['fut_drybulb_C'],
-                                                                 ),
-                              axis=1).astype(float)
-
-    morphed_relhum = pd.Series(np.clip(morphed_relhum.values, 1, 100))
-    return round(morphed_relhum, 2).rename("relhum_percent")
+    morphed_relhum = psych.rel_humid_from_db_hr(
+        np.asarray(future_dbt, dtype=float),
+        future_humid_ratio,
+        np.asarray(future_psl, dtype=float),
+    )
+    return _as_series(np.clip(morphed_relhum, 1, 100), index, "relhum_percent")
 
 
 def morph_psl(present_psl, future_psl, baseline_psl):
@@ -233,23 +244,19 @@ def morph_psl(present_psl, future_psl, baseline_psl):
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    # requires fut_ and hist_ inputs to be monthly climatologies
-    psl_delta = morph_utils.absolute_delta(future_psl, baseline_psl)
-    psl_change = morph_utils.zip_month_data(psl_delta)
+    index = present_psl.index
+    psl_delta = morph_utils.absolute_delta(
+        morph_utils.as_array(future_psl, 12), morph_utils.as_array(baseline_psl, 12),
+    )
+    psl_change = morph_utils.month_factors(index, psl_delta)
 
-    df = pd.DataFrame(present_psl.rename("atmos_Pa"))
-    df['month'] = df.index.month
-
-    morphed_psl = df.apply(lambda x: shift(x['atmos_Pa'],
-                                           psl_change[x['month']]),
-                           axis=1).astype(float)
-
-    return round(morphed_psl, 0).rename("atmos_Pa").astype(int)
+    morphed_psl = shift(present_psl.to_numpy(dtype=float), psl_change)
+    return pd.Series(np.rint(morphed_psl).astype(int), index=index, name="atmos_Pa")
 
 
 def morph_dewpt(future_dbt, future_relhm):
     """
-    Recalculate the dew point from the new DBT and relative humidity using meteocalc
+    Recalculate the dew point from the new DBT and relative humidity
 
     Parameters
     ----------
@@ -264,12 +271,12 @@ def morph_dewpt(future_dbt, future_relhm):
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    df = pd.DataFrame({"drybulb_C": future_dbt,
-                       "relhum_percent": np.clip(future_relhm, 1, 100)})
-    morphed_dewpt = df.apply(lambda x: psych.dew_point_from_db_rh(x['drybulb_C'],
-                                                                  x['relhum_percent']),
-                             axis=1).astype(float)
-    return round(morphed_dewpt, 2).rename("dewpoint_C")
+    index = _index_of(future_dbt, future_relhm)
+    morphed_dewpt = psych.dew_point_from_db_rh(
+        np.asarray(future_dbt, dtype=float),
+        np.clip(np.asarray(future_relhm, dtype=float), 1, 100),
+    )
+    return _as_series(morphed_dewpt, index, "dewpoint_C")
 
 
 def morph_wspd(present_wspd, future_vas, baseline_vas, future_uas, baseline_uas):
@@ -298,29 +305,26 @@ def morph_wspd(present_wspd, future_vas, baseline_vas, future_uas, baseline_uas)
         an annual monthly climatology (12,) pandas series with the baseline wind UAS values
             this is typically from assemble.calc_model_climatologies function
 
-
     Returns
     -------
     pd.Series
         a pandas Series of the same shape as present day input
     """
+    index = present_wspd.index
 
-    fut_spd = morph_utils.uas_vas_2_sfcwind(future_vas, future_uas)
-    baseline_spd = morph_utils.uas_vas_2_sfcwind(baseline_vas, baseline_uas)
+    fut_spd = morph_utils.uas_vas_2_sfcwind(
+        morph_utils.as_array(future_uas, 12), morph_utils.as_array(future_vas, 12),
+    )
+    baseline_spd = morph_utils.uas_vas_2_sfcwind(
+        morph_utils.as_array(baseline_uas, 12), morph_utils.as_array(baseline_vas, 12),
+    )
 
-    wspd_delta = morph_utils.relative_delta(fut_spd, baseline_spd)
-    wspd_shift = 1 + (wspd_delta / 100)
+    # a ratio, where an unchanged wind speed gives 1.0
+    wspd_ratio = morph_utils.relative_delta(fut_spd, baseline_spd)
+    scale_factor_wspd = morph_utils.month_factors(index, wspd_ratio)
 
-    scale_factor_wspd = morph_utils.zip_month_data(wspd_shift)
-
-    df = pd.DataFrame(present_wspd.rename("windspd_ms"))
-    df['month'] = df.index.month
-
-    morphed_wspd = df.apply(lambda x: stretch(x['windspd_ms'],
-                                              scale_factor_wspd[x['month']]),
-                            axis=1).astype(float)
-
-    return round(morphed_wspd, 2).rename("windspd_ms")
+    morphed_wspd = stretch(present_wspd.to_numpy(dtype=float), scale_factor_wspd)
+    return _as_series(np.clip(morphed_wspd, 0, None), index, "windspd_ms")
 
 
 def morph_glohor(present_glohor, future_glohor, baseline_glohor):
@@ -330,7 +334,7 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
     Parameters
     ----------
     present_glohor : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the present day global horizontal radiation (W/m2)
+        an hourly annual (8760,) pandas series with the present day global horizontal radiation (Wh/m2)
             and a datetime index (this typically comes from the EPW)
 
     future_glohor : pd.Series
@@ -346,46 +350,29 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    # create a series of ones for each horu of the year
-    # this will be resampled later to get hours in a month
-    hour_series = pd.Series(np.ones(8760))
+    index = present_glohor.index
 
-    # copy over the timeseries index
-    hour_series.index = present_glohor.index
+    # model data is a monthly mean flux (W/m2), so compare it against the
+    # mean hourly irradiance of each month in the EPW
+    month_hours = present_glohor.resample("ME").size().to_numpy(dtype=float)
+    month_total = present_glohor.resample("ME").sum().to_numpy(dtype=float)
+    month_mean = np.divide(
+        month_total, month_hours,
+        out=np.zeros(12, dtype=float), where=month_hours != 0,
+    )
 
-    # resample to get hours for each month and zip into dict with int months
-    month_hours = morph_utils.zip_month_data(hour_series.resample("ME").sum().tolist())
+    delta_glohor = morph_utils.absolute_delta(
+        morph_utils.as_array(future_glohor, 12), morph_utils.as_array(baseline_glohor, 12),
+    )
+    shift_factors = np.divide(
+        delta_glohor, month_mean,
+        out=np.zeros(12, dtype=float), where=month_mean != 0,
+    ) + 1.0
 
-    # resample glohor to get watt-hours per m2 per month
-    month_glohor = morph_utils.zip_month_data(present_glohor.resample('ME').sum().tolist())
-
-    # get mean glohor per month
-    month_glohor_mean_list = []
-    for key, value in month_hours.items():
-        mean = month_glohor[key] / month_hours[key]
-        month_glohor_mean_list.append(mean)
-    month_glohor_mean_list = morph_utils.zip_month_data(month_glohor_mean_list)  # watt per m2
-
-    # get glohor delta form model data
-    delta_glohor = morph_utils.absolute_delta(future_glohor, baseline_glohor)
-    glohor_change = morph_utils.zip_month_data(delta_glohor)
-
-    # calculate shift factors for each month
-    glohor_shift_list = []
-    for key in month_glohor_mean_list:
-        shift_factor = 1 + (glohor_change[key] / month_glohor_mean_list[key])
-        glohor_shift_list.append(shift_factor)
-    glohor_shift_factors = morph_utils.zip_month_data(glohor_shift_list)
-
-    # set up df for lambda operation
-    df = pd.DataFrame(present_glohor.rename("glohorrad_Whm2"))
-    df['month'] = df.index.month
-
-    morphed_glohor = df.apply(lambda x: stretch(x['glohorrad_Whm2'],
-                                                glohor_shift_factors[x['month']]),
-                              axis=1).astype(float)
-
-    return round(morphed_glohor, 2).rename("glohorrad_Whm2")
+    morphed_glohor = stretch(
+        present_glohor.to_numpy(dtype=float), morph_utils.month_factors(index, shift_factors),
+    )
+    return _as_series(np.clip(morphed_glohor, 0, None), index, "glohorrad_Whm2")
 
 
 def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor):
@@ -395,113 +382,124 @@ def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor)
         [1] B. Ridley, J. Boland, and P. Lauret, ‘Modelling of diffuse solar fraction with multiple predictors’,
                 Renewable Energy, vol. 35, no. 2, pp. 478–483, Feb. 2010, doi: 10.1016/j.renene.2009.07.018.
 
-
     Parameters
     ----------
     longitude : float
         longitude (-180 to 180)
 
     latitude : float
-        latitude (-180 to 180)
+        latitude (-90 to 90)
 
-    utc_offset : int
-        the difference in hours and minutes between Coordinated Universal Time (UTC) and local solar time
+    utc_offset : float
+        the difference in hours between Coordinated Universal Time (UTC) and local standard time
 
-
-    morphed_glohor : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the morphed global horizontal radiation (W/m2)
-            and a datetime index (this typically comes from the EPW)
+    morphed_glohor : array_like
+        an hourly annual (8760,) series with the morphed global horizontal radiation (Wh/m2)
 
     present_exthor : pd.Series
-        an annual monthly climatology (12,) pandas series with the present extraterrestrial horizontal radiation
-            values this is typically from assemble.calc_model_climatologies function
+        an hourly annual (8760,) pandas series with the present day extraterrestrial horizontal radiation
 
     Returns
     -------
     pd.Series
         a pandas Series of the same shape as present day input
     """
+    index = _index_of(present_exthor, morphed_glohor)
+    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset, year=_year_of(index))
+    solar_alt = solar_df['elevation'].to_numpy(dtype=float)
 
-    # get the solar dataframe
-    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset)
-    solar_df['solar_alt'] = solar_df.apply(lambda x: morph_solar_utils.calc_solar_alt(x['zenith']),
-                                           axis=1)
-    solar_df['glohorrad_Whm2'] = morphed_glohor
+    glohor = np.asarray(morphed_glohor, dtype=float)
+    hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(
+        glohor, present_exthor, index=solar_df.index,
+    )
+    daily = morph_utils.day_factors(solar_df.index, list(daily_clearness.values()))
+    persistence = morph_solar_utils.persistence(
+        hourly_clearness,
+        morph_solar_utils.build_sunrise_sunset(longitude, latitude, utc_offset, year=_year_of(index)),
+    )
 
-    # calc clearness from morphed glohor
-    hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(morphed_glohor, present_exthor)
-    solar_df['hourly_clearness'] = hourly_clearness
-    solar_df['daily_clearness'] = solar_df['doy'].map(lambda x: daily_clearness[x]).values
+    exponent = (
+        -5.38
+        + 6.63 * hourly_clearness
+        + 0.006 * solar_df['local_solar_time'].to_numpy(dtype=float)
+        - 0.007 * solar_alt
+        + 1.75 * daily
+        + 1.31 * persistence
+    )
+    # the logistic gives the diffuse fraction, which cannot leave [0, 1]
+    diffuse_fraction = np.clip(1.0 / (1.0 + np.exp(exponent)), 0.0, 1.0)
 
-    # getun sunrise and sunset for persistence
-    sunrise_sunset_idx = morph_solar_utils.build_sunrise_sunset(longitude, latitude)
-
-    # calc persistence
-    solar_df['persistence'] = morph_solar_utils.persistence(hourly_clearness, sunrise_sunset_idx)
-    morphed_difhor = solar_df.apply(
-        lambda x: x['glohorrad_Whm2'] * (1 / (1 + np.exp(-5.38 + 6.63 * x['hourly_clearness'] +
-                                                           0.006 * x['local_solar_time'] - 0.007 *
-                                                           x['solar_alt'] + 1.75 * x['daily_clearness'] +
-                                                           1.31 * x['persistence']))), axis=1).fillna(0).astype(int)
-
-    return round(morphed_difhor, 2).rename('difhorrad_Whm2')
+    morphed_difhor = np.nan_to_num(glohor * diffuse_fraction, nan=0.0)
+    return _as_series(np.clip(morphed_difhor, 0, glohor), index, "difhorrad_Whm2")
 
 
-def calc_dirnor(morphed_glohor, morphed_difhor, present_dirnor, longitude, latitude, utc_offset):
+def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset,
+                extraterrestrial_dirnor=None, min_solar_altitude=MIN_SOLAR_ALTITUDE):
     """
-    Direct normal radiation morph is a recalculation based on the morphed global horizontal
-        essentially a wrapper around pvlib's method
+    Direct normal radiation morph is a recalculation from the morphed global and diffuse horizontal
+
+    The beam component on the horizontal is projected onto the normal with the
+    sine rule.  That projection is unbounded as the sun approaches the horizon,
+    so hours below *min_solar_altitude* are set to zero and the result is capped
+    at the extraterrestrial direct normal irradiance.
+
     Parameters
     ----------
+    morphed_glohor : array_like
+        an hourly annual (8760,) series with the morphed global horizontal radiation (Wh/m2)
+
+    morphed_difhor : array_like
+        an hourly annual (8760,) series with the morphed diffuse horizontal radiation (Wh/m2)
+
     longitude : float
         longitude (-180 to 180)
 
     latitude : float
-        latitude (-180 to 180)
+        latitude (-90 to 90)
 
-    utc_offset : int
-        the difference in hours and minutes between Coordinated Universal Time (UTC) and local solar time
+    utc_offset : float
+        the difference in hours between Coordinated Universal Time (UTC) and local standard time
 
-    morphed_glohor : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the morphed global horizontal radiation (W/m2)
-            and a datetime index (this typically comes from the EPW)
+    extraterrestrial_dirnor : array_like or None
+        an hourly annual (8760,) series of extraterrestrial direct normal radiation, used as the
+            physical ceiling.  This is the ``extdirrad_Whm2`` column of the EPW.  When omitted the
+            solar constant is used instead.
+
+    min_solar_altitude : float
+        solar altitude in degrees below which the direct normal radiation is set to zero
 
     Returns
     -------
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset)
-    hours = morph_utils.ts_8760()
-    solar_df['glorhorrad_Whm2'] = morphed_glohor
-    solar_df['difhorrad_Whm2'] = morphed_difhor
-    solar_df['present_dirnor'] = present_dirnor
+    index = _index_of(extraterrestrial_dirnor, morphed_glohor, morphed_difhor)
+    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset, year=_year_of(index))
+    solar_alt = solar_df['elevation'].to_numpy(dtype=float)
 
-    def calc_dirnor_sinrule(ghr, dhr, dni_og, solar_alt):
-        solar_alt_radians = math.radians(solar_alt)
-        sin_alt = math.sin(solar_alt_radians)
+    glohor = np.asarray(morphed_glohor, dtype=float)
+    difhor = np.asarray(morphed_difhor, dtype=float)
+    beam_horizontal = glohor - difhor
 
-        # if sin_alt <= 0:  # To avoid division by zero or negative sine values
-        #     return 0  # or some other default value
+    sin_alt = np.sin(np.radians(solar_alt))
+    usable = (solar_alt >= min_solar_altitude) & (beam_horizontal > 0)
+    dirnor = np.divide(beam_horizontal, sin_alt, out=np.zeros_like(beam_horizontal), where=usable)
 
-        if sin_alt<=0:
-            dni = 0
-        else:
-            horizontal_difference = ghr - dhr
-            if (horizontal_difference<10) and (sin_alt<0.01):
-                dni = 0
-            else:
-                dni = horizontal_difference / sin_alt
-        return dni
+    if extraterrestrial_dirnor is None:
+        ceiling = SOLAR_CONSTANT
+    else:
+        ceiling = np.asarray(extraterrestrial_dirnor, dtype=float)
+    dirnor = np.clip(np.nan_to_num(dirnor, nan=0.0, posinf=0.0, neginf=0.0), 0, ceiling)
 
-    return solar_df.apply(lambda x: calc_dirnor_sinrule(x['glorhorrad_Whm2'], x['difhorrad_Whm2'], x['present_dirnor'], x['elevation']),axis=1)
-    # return pvlib.irradiance.dirint(morphed_glohor, solar_df['zenith'].values, hours)
-
+    return _as_series(dirnor, index, "dirnorrad_Whm2")
 
 
 def calc_tsc(present_tsc, future_clt, baseline_clt):
     """
-    Total sky cover requires a stretch
+    Total sky cover requires a shift
+
+    CMIP6 reports cloud area fraction (clt) as a percentage, while the EPW
+    records sky cover in tenths, so the modelled change is divided by ten.
 
     Parameters
     ----------
@@ -522,28 +520,24 @@ def calc_tsc(present_tsc, future_clt, baseline_clt):
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    clt_delta = (morph_utils.absolute_delta(future_clt,baseline_clt) / 10).astype(int)
-    clt_change = morph_utils.zip_month_data(clt_delta.values.tolist())
+    index = present_tsc.index
+    clt_delta = morph_utils.absolute_delta(
+        morph_utils.as_array(future_clt, 12), morph_utils.as_array(baseline_clt, 12),
+    ) / 10.0
+    clt_change = morph_utils.month_factors(index, clt_delta)
 
-    df = pd.DataFrame(present_tsc.rename("totskycvr_tenths"))
-    df['month'] = df.index.month
-
-    morphed_tsc = df.apply(lambda x: shift(x['totskycvr_tenths'],
-                                              clt_change[x['month']]),
-                              axis=1).astype(float)
-    morphed_tsc = pd.Series(np.clip(morphed_tsc.values, 0, 10)).astype(int)
-    return round(morphed_tsc, 2).rename("totskycvr_tenths")
+    morphed_tsc = np.clip(shift(present_tsc.to_numpy(dtype=float), clt_change), 0, 10)
+    return pd.Series(np.rint(morphed_tsc).astype(int), index=index, name="totskycvr_tenths")
 
 
 def calc_osc(morphed_tsc, present_osc, present_tsc):
     """
-    Opaque sky cover is derived using the present day ratio of opaque to total multipled by mrophed total
+    Opaque sky cover is derived using the present day ratio of opaque to total multiplied by morphed total
 
     Parameters
     ----------
-    morphed_tsc : pd.Series with datetimeindex
-        an hourly annual (8760,) pandas series with the morphed day total sky cover in tenths
-            and a datetime index (this typically comes from the EPW)
+    morphed_tsc : array_like
+        an hourly annual (8760,) series with the morphed total sky cover in tenths
 
     present_osc : pd.Series with datetimeindex
         an hourly annual (8760,) pandas series with the present day opaque sky cover in tenths
@@ -558,6 +552,10 @@ def calc_osc(morphed_tsc, present_osc, present_tsc):
     pd.Series
         a pandas Series of the same shape as present day input
     """
-    osc_tsc_ratio = np.divide(present_osc, present_tsc, out=np.zeros_like(present_osc), where=present_tsc != 0)
-    return round(osc_tsc_ratio * morphed_tsc, 2).rename("opaqskycvr_tenths")
+    index = _index_of(present_osc, present_tsc, morphed_tsc)
+    opaque = np.asarray(present_osc, dtype=float)
+    total = np.asarray(present_tsc, dtype=float)
 
+    osc_tsc_ratio = np.divide(opaque, total, out=np.zeros_like(opaque), where=total != 0)
+    morphed_osc = np.clip(osc_tsc_ratio * np.asarray(morphed_tsc, dtype=float), 0, 10)
+    return pd.Series(np.rint(morphed_osc).astype(int), index=index, name="opaqskycvr_tenths")

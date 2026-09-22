@@ -1,4 +1,3 @@
-# coding=utf-8
 """Load custom (non-CMIP6) climate model data from CSV files.
 
 The CSV format expected is:

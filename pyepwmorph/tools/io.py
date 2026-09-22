@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """EPW file reading and writing with validation."""
 
 import csv
@@ -70,7 +69,7 @@ def _find_header_length(lines: list[str]) -> int:
 
 def read_epw_string(filepath: str) -> list[str]:
     """Read an EPW file and return its raw lines."""
-    with open(filepath, "r", encoding="utf-8") as fh:
+    with open(filepath, encoding="utf-8") as fh:
         return fh.readlines()
 
 
@@ -84,7 +83,10 @@ def read_epw_header(file_content: list[str]) -> dict:
             break
         key = row[0]
         if key in d:
-            warnings.warn(f"Duplicate EPW header key '{key}'; later value overwrites earlier")
+            warnings.warn(
+                f"Duplicate EPW header key '{key}'; later value overwrites earlier",
+                stacklevel=2,
+            )
         d[key] = row[1:]
     return d
 
@@ -107,14 +109,22 @@ def epw_baseline_range(file_content: list[str]) -> tuple[int, int]:
     return (int(years.min()), int(years.max()))
 
 
-def read_epw_dataframe(filepath: str) -> pd.DataFrame:
+def read_epw_dataframe(filepath: str, normalize_hours: bool = True) -> pd.DataFrame:
     """Read an EPW file into a pandas DataFrame with an 8760-hour index.
 
     The year used for the datetime index is derived from the first data row
     of the EPW file itself.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the EPW file.
+    normalize_hours : bool
+        Rewrite the ``hour`` column from the EPW 1-24 convention to 0-23 and
+        zero the ``minute`` column.  Leave this *False* if the frame will be
+        written back out as an EPW, which requires the 1-24 convention.
     """
-    file_content = read_epw_string(filepath)
-    header_len = _find_header_length(file_content)
+    header_len = _find_header_length(read_epw_string(filepath))
 
     df = pd.read_csv(
         filepath,
@@ -127,13 +137,14 @@ def read_epw_dataframe(filepath: str) -> pd.DataFrame:
 
     _validate_dataframe(df, filepath)
 
-    df['hour'] = df['hour'].astype(int)
-    if df['hour'].iloc[0] == 1:
-        logger.info("TMY file hours reduced from 1-24h to 0-23h")
-        df['hour'] = df['hour'] - 1
-    else:
-        logger.debug("TMY file hours already 0-23h")
-    df['minute'] = 0
+    if normalize_hours:
+        df['hour'] = df['hour'].astype(int)
+        if df['hour'].iloc[0] == 1:
+            logger.info("TMY file hours reduced from 1-24h to 0-23h")
+            df['hour'] = df['hour'] - 1
+        else:
+            logger.debug("TMY file hours already 0-23h")
+        df['minute'] = 0
 
     year = int(df['year'].iloc[0])
     df.set_index(morph_utils.ts_8760(year=year), inplace=True)
@@ -177,7 +188,7 @@ class Epw:
         self._read_location()
 
     def _read_string(self):
-        with open(self.fp, "r", encoding="utf-8") as fh:
+        with open(self.fp, encoding="utf-8") as fh:
             self.string = fh.readlines()
 
     def _read_location(self):
@@ -187,20 +198,29 @@ class Epw:
         self.headers = read_epw_header(self.string)
 
     def _read_data(self):
-        first_row = _find_header_length(self.string)
-        df = pd.read_csv(
-            self.fp,
-            skiprows=first_row,
-            header=None,
-            names=EPW_COLUMN_NAMES,
-        )
-
-        _validate_dataframe(df, self.fp)
-
-        year = int(df['year'].iloc[0])
-        df.set_index(morph_utils.ts_8760(year=year), inplace=True)
-        df['year'] = year
+        # hours stay in the EPW 1-24 convention so the file can be written back out
+        df = read_epw_dataframe(self.fp, normalize_hours=False)
+        df['year'] = int(df['year'].iloc[0])
         self.dataframe = df
+
+    def add_comment(self, text: str):
+        """Append *text* to the COMMENTS 2 header, creating it if absent.
+
+        Not every EPW carries a COMMENTS 2 line.  When it is missing the line
+        is inserted before DATA PERIODS, which the EPW format requires to be
+        the last header row.
+        """
+        if 'COMMENTS 2' not in self.headers:
+            rebuilt: dict[str, list[str]] = {}
+            for key, value in self.headers.items():
+                if key == 'DATA PERIODS':
+                    rebuilt['COMMENTS 2'] = ['']
+                rebuilt[key] = value
+            rebuilt.setdefault('COMMENTS 2', [''])
+            self.headers = rebuilt
+        if not self.headers['COMMENTS 2']:
+            self.headers['COMMENTS 2'] = ['']
+        self.headers['COMMENTS 2'][0] += text
 
     def build_header_string(self) -> list[str]:
         header_lines = []

@@ -18,35 +18,31 @@ requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10", 
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 dependencies = [
-    # Core data processing dependencies
-    'numpy>=1.20.0',
-    'pandas>=1.3.0',
+    # Core data processing
+    # pandas 2.2 is the floor for the "ME"/"h" resample aliases used throughout
+    'numpy>=1.24',
+    'pandas>=2.2',
+
+    # CMIP6 access from the Pangeo catalogue on Google Cloud
     'xarray>=2022.3.0',
     'dask>=2023.5.0',
-    'distributed>=2023.5.0', 
     'gcsfs>=2023.5.0',
     'intake-esm>=2023.6.0',
     'intake>=0.6.0',
     'pyarrow>=13.0.0',
-    
-    # Climate data processing  
-    'meteocalc>=1.1.0',
-    
-    # Solar calculations
+
+    # Solar geometry
     'pvlib>=0.13.0,<1.0.0',
-    'timezonefinder>=6.0.0',
-    'skyfield>=1.40',
-    
-    # Basic utilities
-    'lz4>=4.0.0',
-    'ipython>=7.0',
 ]
 
 [project.optional-dependencies]
@@ -62,5 +58,27 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/justinfmccarty/pyepwmorph"
 Issues = "https://github.com/justinfmccarty/pyepwmorph/issues"
+Changelog = "https://github.com/justinfmccarty/pyepwmorph/blob/main/CHANGELOG.md"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = [
+    "error::DeprecationWarning:pyepwmorph.*",
+]
 
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",    # long lines are tolerated in the numpydoc blocks
+    "UP006",   # typing.Dict/List stay until the 3.9 floor is raised
+    "UP035",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
