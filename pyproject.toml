@@ -5,6 +5,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build]
 include = ["pyepwmorph/*"]
 
+# hatchling 1.32 defaults to core metadata 2.5, which twine below 7.0 rejects,
+# including the twine inside pypa/gh-action-pypi-publish. Stay on 2.4 until the
+# upload path supports 2.5.
+[tool.hatch.build.targets.wheel]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
+
 [project]
 name = "pyepwmorph"
 version = "2.2.0"
