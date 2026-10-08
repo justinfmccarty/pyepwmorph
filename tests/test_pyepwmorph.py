@@ -926,6 +926,35 @@ def identity_morph(epw_path, identity_climate_data):
     return result["2050"]["target"]["50"], Epw(epw_path)
 
 
+def test_radiation_identity_leaves_shortwave_and_sky_cover(epw_path, identity_climate_data):
+    """Radiation (no sky cover) is a no-op without a climate signal."""
+    from pyepwmorph.tools.io import Epw
+    from pyepwmorph.tools.workflow import morphing_workflow
+
+    result = morphing_workflow(
+        project_name="identity-radiation",
+        epw_file=epw_path,
+        user_variables=["Radiation"],
+        user_pathways=["target"],
+        percentiles=[50],
+        target_years=[2050],
+        data_source="custom",
+        custom_data=identity_climate_data,
+        reference_scenario="reference",
+        baseline_range=TEST_BASELINE_RANGE,
+        write_file=False,
+    )
+    morphed = result["2050"]["target"]["50"]
+    original = Epw(epw_path)
+    for column in ("glohorrad_Whm2", "totskycvr_tenths", "opaqskycvr_tenths"):
+        assert np.allclose(
+            morphed.dataframe[column].to_numpy(dtype=float),
+            original.dataframe[column].to_numpy(dtype=float),
+            atol=0.01,
+        )
+    assert "sky cover left unmorphed" in morphed.headers["COMMENTS 2"][0]
+
+
 class TestIdentityMorph:
     """With no climate signal the morph must be a no-op for every shifted or
     stretched variable.  Dew point and the two derived irradiance components
@@ -1151,6 +1180,310 @@ class TestCache:
         assert cache.get_cache_stats()["total_files"] == 1
         cache.clear_cache()
         assert cache.get_cache_stats()["total_files"] == 0
+
+
+def _swiss_epw(tmp_path, latitude=47.378, longitude=8.566, elevation=556.0):
+    """Copy the test EPW and move its location into Switzerland."""
+    text = TEST_EPW.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    fields = lines[0].rstrip("\n").split(",")
+    fields[6] = f"{latitude:.5f}"
+    fields[7] = f"{longitude:.5f}"
+    fields[9] = f"{elevation:.1f}"
+    lines[0] = ",".join(fields) + "\n"
+    dest = tmp_path / "swiss.epw"
+    dest.write_text("".join(lines), encoding="utf-8")
+    return str(dest)
+
+
+def _ch2025_paired_change(variable, kind, state="gwl2.0"):
+    """Per-chain change from ref91-20 to *state* at SMA, over shared chains."""
+    from pyepwmorph.models.ch2025 import load_table
+
+    table = load_table()
+
+    def climatology(name):
+        subset = table[
+            (table["station_id"] == "sma")
+            & (table["variable"] == variable)
+            & (table["state"] == name)
+        ]
+        return subset.pivot(index="month", columns="chain", values="value")
+
+    reference = climatology("ref91-20")
+    future = climatology(state)
+    common = reference.columns.intersection(future.columns)
+    if kind == "delta":
+        return future[common] - reference[common]
+    return future[common] / reference[common]
+
+
+def _ch2025_median_signal(variable, kind):
+    """Median across paired model chains of the SMA ref91-20 to gwl2.0 change."""
+    from pyepwmorph.models.ch2025 import load_table
+
+    table = load_table()
+
+    def climatology(state):
+        subset = table[
+            (table["station_id"] == "sma")
+            & (table["variable"] == variable)
+            & (table["state"] == state)
+        ]
+        return subset.pivot(index="month", columns="chain", values="value")
+
+    reference = climatology("ref91-20")
+    future = climatology("gwl2.0")
+    common = reference.columns.intersection(future.columns)
+    change = future[common] - reference[common] if kind == "delta" else future[common] / reference[common]
+    return change.median(axis=1)
+
+
+class TestCH2025:
+
+    def test_sma_median_signal_matches_published_shape(self):
+        tas = _ch2025_median_signal("tas", "delta")
+        assert tas.loc[1] == pytest.approx(1.41, abs=0.01)
+        assert tas.loc[8] == pytest.approx(2.24, abs=0.01)
+        assert _ch2025_median_signal("hurs", "ratio").loc[8] == pytest.approx(0.95, abs=0.01)
+        assert _ch2025_median_signal("rsds", "ratio").loc[7] == pytest.approx(1.05, abs=0.01)
+        assert _ch2025_median_signal("sfcWind", "ratio").loc[1] == pytest.approx(1.02, abs=0.01)
+
+    def test_ensemble_membership_varies_by_variable(self):
+        from pyepwmorph.models.ch2025 import build_ch2025_ensemble
+
+        temperature = build_ch2025_ensemble([50], "tas", "sma", "ref91-20")
+        humidity = build_ch2025_ensemble([50], "hurs", "sma", "ref91-20")
+        assert len(temperature) == 12
+        assert temperature.attrs["n_chains"] == 26
+        assert humidity.attrs["n_chains"] == 21
+
+    def test_bbox_rejects_a_non_swiss_epw(self, epw_path, tmp_output):
+        from pyepwmorph.tools import configuration as morph_config
+
+        with pytest.raises(ValueError, match="outside Switzerland"):
+            morph_config.MorphConfig(
+                project_name="outside",
+                epw_fp=epw_path,
+                user_variables=["Temperature"],
+                user_pathways=["gwl2.0"],
+                percentiles=[50],
+                output_directory=tmp_output,
+                data_source="ch2025",
+            )
+
+    def test_nearest_station_is_sma_for_zurich(self):
+        from pyepwmorph.models.ch2025 import nearest_station
+
+        chosen = nearest_station(47.378, 8.566, 556, variables=["tas", "tasmax", "tasmin"])
+        assert chosen["station_id"] == "sma"
+
+    def test_elevation_can_outweigh_horizontal_distance(self):
+        from pyepwmorph.models.ch2025 import nearest_station
+
+        variables = ["tas", "tasmax", "tasmin"]
+        valley = nearest_station(47.378, 8.566, 556, variables=variables)
+        alpine = nearest_station(47.378, 8.566, 3000, variables=variables)
+        assert alpine["station_id"] != valley["station_id"]
+        assert abs(alpine["elevation"] - 3000) < abs(valley["elevation"] - 3000)
+
+    def test_pressure_and_clouds_are_rejected(self, tmp_path, tmp_output):
+        from pyepwmorph.tools import configuration as morph_config
+
+        epw = _swiss_epw(tmp_path)
+        for variable in ("Pressure", "Clouds and Radiation"):
+            with pytest.raises(ValueError, match="CH2025"):
+                morph_config.MorphConfig(
+                    project_name="unsupported",
+                    epw_fp=epw,
+                    user_variables=[variable],
+                    user_pathways=["GWL 2.0"],
+                    percentiles=[50],
+                    output_directory=tmp_output,
+                    data_source="ch2025",
+                )
+
+    def test_baseline_mismatch_warns(self, tmp_path, tmp_output):
+        from pyepwmorph.tools import configuration as morph_config
+
+        with pytest.warns(UserWarning, match="1991-2020"):
+            config = morph_config.MorphConfig(
+                project_name="baseline",
+                epw_fp=_swiss_epw(tmp_path),
+                user_variables=["Temperature"],
+                user_pathways=["GWL 2.0"],
+                percentiles=[50],
+                output_directory=tmp_output,
+                data_source="ch2025",
+            )
+        assert config.model_pathways == ["gwl2.0", "ref91-20"]
+        assert config.ch2025_station["station_id"] == "sma"
+        assert config.reference_scenario == "ref91-20"
+
+    def test_workflow_morphs_temperature_and_leaves_pressure_and_sky(self, tmp_path):
+        from pyepwmorph.tools import io as morph_io
+        from pyepwmorph.tools.workflow import morphing_workflow
+
+        epw_path = _swiss_epw(tmp_path)
+        original = morph_io.Epw(epw_path).dataframe
+        output = tmp_path / "out"
+        with pytest.warns(UserWarning, match="1991-2020"):
+            result = morphing_workflow(
+                project_name="swiss",
+                epw_file=epw_path,
+                user_variables=["Temperature"],
+                user_pathways=["gwl2.0"],
+                percentiles=[50],
+                output_directory=str(output),
+                data_source="ch2025",
+            )
+        morphed = result["gwl2.0"]["50"]
+        assert len(morphed.dataframe) == 8760
+        assert morphed.dataframe["drybulb_C"].mean() > original["drybulb_C"].mean()
+        assert morphed.dataframe["atmos_Pa"].equals(original["atmos_Pa"])
+        assert morphed.dataframe["totskycvr_tenths"].equals(original["totskycvr_tenths"])
+        assert (output / "gwl2.0_50.epw").exists()
+
+    def test_direct_humidity_and_wind_apply_the_full_ratio(self, epw_path, flat_climatology):
+        from pyepwmorph.morph import procedures
+        from pyepwmorph.tools import io as morph_io
+
+        present = morph_io.Epw(epw_path).dataframe
+        humidity = procedures.morph_relhum_direct(
+            present["relhum_percent"], flat_climatology * 80, flat_climatology * 100,
+        )
+        wind = procedures.morph_wspd_direct(
+            present["windspd_ms"], flat_climatology * 1.2, flat_climatology,
+        )
+        # saturated hours cannot fall below the clip in a way that breaks the median
+        ratio = humidity.to_numpy() / present["relhum_percent"].to_numpy()
+        assert np.median(ratio) == pytest.approx(0.8, abs=0.01)
+        assert wind.mean() / present["windspd_ms"].mean() == pytest.approx(1.2, abs=1e-3)
+
+    def test_change_ensemble_uses_paired_chains(self):
+        from pyepwmorph.models.ch2025 import build_ch2025_change_ensemble
+
+        reference, future = build_ch2025_change_ensemble([10, 50, 90], "tas", "sma", "gwl2.0")
+        paired = _ch2025_paired_change("tas", "delta", "gwl2.0")
+        for percentile in (10, 50, 90):
+            expected = paired.quantile(percentile / 100.0, axis=1)
+            np.testing.assert_allclose(
+                (future[percentile] - reference[percentile]).to_numpy(), expected.to_numpy(),
+            )
+        ratio_ref, ratio_future = build_ch2025_change_ensemble([90], "rsds", "sma", "gwl2.0")
+        expected_ratio = _ch2025_paired_change("rsds", "ratio", "gwl2.0").quantile(0.9, axis=1)
+        np.testing.assert_allclose(
+            (ratio_future[90] / ratio_ref[90]).to_numpy(), expected_ratio.to_numpy(),
+        )
+
+    def test_change_ensemble_drops_chains_missing_from_the_warming_level(self):
+        from pyepwmorph.models.ch2025 import build_ch2025_change_ensemble
+
+        reference, future = build_ch2025_change_ensemble([50], "tas", "sma", "gwl3.0")
+        assert reference.attrs["n_chains"] == future.attrs["n_chains"] == 24
+
+    def test_identical_states_leave_the_epw_unchanged(self, tmp_path, monkeypatch):
+        """Identity morph: a warming level equal to the reference changes nothing."""
+        from pyepwmorph.models import ch2025
+        from pyepwmorph.tools import io as morph_io
+        from pyepwmorph.tools.workflow import morphing_workflow
+
+        table = ch2025.load_table()
+        reference_rows = table[table["state"] == "ref91-20"]
+        identity = pd.concat(
+            [reference_rows, reference_rows.assign(state="gwl2.0")], ignore_index=True,
+        )
+        monkeypatch.setattr(ch2025, "load_table", lambda: identity)
+
+        epw_path = _swiss_epw(tmp_path)
+        original = morph_io.Epw(epw_path).dataframe
+        with pytest.warns(UserWarning, match="1991-2020"):
+            result = morphing_workflow(
+                project_name="identity",
+                epw_file=epw_path,
+                user_variables=["Temperature", "Humidity", "Wind", "Radiation", "Dew Point"],
+                user_pathways=["gwl2.0"],
+                percentiles=[10, 90],
+                write_file=False,
+                data_source="ch2025",
+            )
+        for percentile in ("10", "90"):
+            morphed = result["gwl2.0"][percentile].dataframe
+            for column in ("drybulb_C", "relhum_percent", "windspd_ms", "glohorrad_Whm2"):
+                np.testing.assert_allclose(
+                    morphed[column].to_numpy(dtype=float),
+                    original[column].to_numpy(dtype=float),
+                    atol=0.011,
+                    err_msg=f"{column} changed at p{percentile}",
+                )
+
+    def test_full_coverage_restricts_station_choice(self, tmp_path, tmp_output):
+        from pyepwmorph.models.ch2025 import CH2025_VARIABLES, available_stations
+        from pyepwmorph.tools import configuration as morph_config
+
+        full = set(available_stations(CH2025_VARIABLES)["station_id"])
+        assert 0 < len(full) < len(available_stations())
+        with pytest.warns(UserWarning):
+            config = morph_config.MorphConfig(
+                project_name="coverage",
+                epw_fp=_swiss_epw(tmp_path),
+                user_variables=["Temperature"],
+                user_pathways=["GWL 2.0"],
+                percentiles=[50],
+                output_directory=tmp_output,
+                data_source="ch2025",
+                ch2025_full_coverage=True,
+            )
+        assert config.ch2025_station["station_id"] in full
+
+    def test_baseline_notes_recommend_a_matching_tmy(self, tmp_path, tmp_output):
+        from pyepwmorph.models.ch2025 import baseline_matches
+        from pyepwmorph.tools import configuration as morph_config
+
+        assert baseline_matches((1991, 2020))
+        assert baseline_matches((1995, 2015))
+        assert not baseline_matches((2009, 2023))
+        with pytest.warns(UserWarning, match="TMY"):
+            config = morph_config.MorphConfig(
+                project_name="notes",
+                epw_fp=_swiss_epw(tmp_path),
+                user_variables=["Temperature"],
+                user_pathways=["GWL 2.0"],
+                percentiles=[50],
+                output_directory=tmp_output,
+                data_source="ch2025",
+            )
+        assert any("TMY" in note for note in config.ch2025_notes)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            matched = morph_config.MorphConfig(
+                project_name="matched",
+                epw_fp=_swiss_epw(tmp_path),
+                user_variables=["Temperature"],
+                user_pathways=["GWL 2.0"],
+                percentiles=[50],
+                output_directory=tmp_output,
+                data_source="ch2025",
+                baseline_range=(1991, 2020),
+            )
+        assert matched.ch2025_notes == []
+
+    def test_morphed_epw_carries_the_citation(self, tmp_path):
+        from pyepwmorph.tools.workflow import morphing_workflow
+
+        with pytest.warns(UserWarning):
+            result = morphing_workflow(
+                project_name="cite",
+                epw_file=_swiss_epw(tmp_path),
+                user_variables=["Temperature"],
+                user_pathways=["gwl2.0"],
+                percentiles=[50],
+                write_file=False,
+                data_source="ch2025",
+            )
+        comments = ",".join(result["gwl2.0"]["50"].headers["COMMENTS 2"])
+        assert "CC-BY 4.0" in comments
+        assert "station sma" in comments
 
 
 if __name__ == "__main__":

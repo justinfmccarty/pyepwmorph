@@ -221,6 +221,34 @@ def morph_relhum(present_relhum, present_psl, present_dbt, future_psl, future_db
     return _as_series(np.clip(morphed_relhum, 1, 100), index, "relhum_percent")
 
 
+def morph_relhum_direct(present_relhum, future_hurs, baseline_hurs):
+    """Stretch relative humidity by the modelled relative-humidity ratio.
+
+    CH2025 provides ``hurs`` directly, so the specific-humidity round trip
+    used by ``morph_relhum`` is not needed.
+
+    Parameters
+    ----------
+    present_relhum : pd.Series
+        Hourly present-day relative humidity in percent.
+    future_hurs : pd.Series
+        Twelve monthly future relative-humidity values.
+    baseline_hurs : pd.Series
+        Twelve monthly baseline relative-humidity values.
+
+    Returns
+    -------
+    pd.Series
+        Morphed relative humidity, clipped to ``[1, 100]``.
+    """
+    index = present_relhum.index
+    ratio = morph_utils.relative_delta(
+        morph_utils.as_array(future_hurs, 12), morph_utils.as_array(baseline_hurs, 12),
+    )
+    morphed = stretch(present_relhum.to_numpy(dtype=float), morph_utils.month_factors(index, ratio))
+    return _as_series(np.clip(morphed, 1, 100), index, "relhum_percent")
+
+
 def morph_psl(present_psl, future_psl, baseline_psl):
     """
     Pressure at sea level morph requires a shift
@@ -325,6 +353,31 @@ def morph_wspd(present_wspd, future_vas, baseline_vas, future_uas, baseline_uas)
 
     morphed_wspd = stretch(present_wspd.to_numpy(dtype=float), scale_factor_wspd)
     return _as_series(np.clip(morphed_wspd, 0, None), index, "windspd_ms")
+
+
+def morph_wspd_direct(present_wspd, future_sfcwind, baseline_sfcwind):
+    """Stretch wind speed by a scalar surface-wind ratio.
+
+    Parameters
+    ----------
+    present_wspd : pd.Series
+        Hourly present-day wind speed in m/s.
+    future_sfcwind : pd.Series
+        Twelve monthly future surface wind speeds.
+    baseline_sfcwind : pd.Series
+        Twelve monthly baseline surface wind speeds.
+
+    Returns
+    -------
+    pd.Series
+        Morphed wind speed, clipped at zero.
+    """
+    index = present_wspd.index
+    ratio = morph_utils.relative_delta(
+        morph_utils.as_array(future_sfcwind, 12), morph_utils.as_array(baseline_sfcwind, 12),
+    )
+    morphed = stretch(present_wspd.to_numpy(dtype=float), morph_utils.month_factors(index, ratio))
+    return _as_series(np.clip(morphed, 0, None), index, "windspd_ms")
 
 
 def morph_glohor(present_glohor, future_glohor, baseline_glohor):

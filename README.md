@@ -12,6 +12,7 @@ A Python package for morphing EnergyPlus Weather (EPW) files with climate model 
 
 - **CMIP6 data** fetched automatically from Google Cloud (Pangeo)
 - **Custom CSV data** from any climate model, including historical reconstructions
+- **CH2025 station scenarios** for Switzerland, shipped with the package and indexed by global warming level
 
 ## Installation
 
@@ -89,6 +90,29 @@ Custom CSVs should have a `date` column (parseable by pandas) and a column named
 
 The reference and target scenarios must cover **different years**, the same way the CMIP6 `historical` and `sspXXX` experiments do. The two series are concatenated before the baseline and target periods are sliced out, so overlapping years get averaged together and weaken the climate signal. Keep `baseline_range` inside the years the reference scenario covers.
 
+### Switzerland (CH2025 warming levels)
+
+For an EPW inside Switzerland, `data_source="ch2025"` morphs from MeteoSwiss CH2025 station scenarios. There is no target year: each pathway is a global warming level relative to 1991-2020, and the run is offline.
+
+```python
+results = workflow.morphing_workflow(
+    project_name="Zurich_GWL2",
+    epw_file="zurich.epw",
+    user_variables=["Temperature", "Humidity", "Wind", "Radiation", "Dew Point"],
+    user_pathways=["GWL 2.0"],
+    percentiles=[50],
+    output_directory="output/",
+    data_source="ch2025",
+)
+morphed = results["gwl2.0"]["50"]
+```
+
+The site is matched to the nearest station that has the requested variables (or, with `ch2025_full_coverage=True`, the nearest station that has every CH2025 variable), with an elevation penalty so a much higher station is not chosen just because it is close on the map. Supported variables are temperature, humidity, dew point, wind, and radiation (global, diffuse, and direct). Pressure and cloud cover are not in CH2025; requesting them raises an error. Sky cover is left at the EPW's baseline values when radiation is morphed, so longwave sky temperature in EnergyPlus does not follow the shortwave change.
+
+The signal is the change from the 1991-2020 reference climate to the chosen warming level. Each model chain's change is computed first, over the chains that reach that warming level, and the percentiles are taken of those changes. If the EPW's years fall outside 1991-2020, a `UserWarning` recommends a TMY built from 1991-2020 data and the signal is still applied to the file as it stands. The same caveats are listed in `MorphConfig.ch2025_notes` and the matched station in `MorphConfig.ch2025_station`.
+
+CH2025 data: MeteoSwiss & ETH Zurich (2025), Climate CH2025 - Daily Datasets, CC-BY 4.0, https://doi.org/10.18751/climate/scenarios/ch2025/data/1.0/
+
 ## Climate scenarios
 
 | Scenario              | SSP    | Description                             | Expected warming |
@@ -104,15 +128,16 @@ The reference and target scenarios must cover **different years**, the same way 
 - **Humidity** -- relative humidity, stretched in specific humidity space
 - **Pressure** -- atmospheric pressure (shift)
 - **Wind** -- wind speed (stretch)
-- **Clouds and Radiation** -- global/diffuse/direct radiation and sky cover
+- **Radiation** -- global/diffuse/direct radiation, without changing sky cover (all sources; the only radiation option for CH2025)
+- **Clouds and Radiation** -- global/diffuse/direct radiation and sky cover (CMIP6 and custom data)
 - **Dew Point** -- recalculated from morphed temperature and humidity
 
 ### Variable dependencies
 
 Some variables cannot be morphed on their own:
 
-- **Humidity** requires Temperature and Pressure
-- **Dew Point** requires Temperature, Humidity, and Pressure
+- **Humidity** requires Temperature and Pressure, except with CH2025, where relative humidity is stretched directly
+- **Dew Point** requires Temperature, Humidity, and Pressure (Temperature and Humidity only with CH2025)
 
 Dependencies are added automatically and are **written to the output file**. Asking for `Dew Point` alone therefore returns an EPW with morphed pressure, temperature, relative humidity, and dew point, which keeps the file internally consistent. `MorphConfig.resolved_variables` shows exactly what will be written, in the order it is computed.
 
@@ -181,7 +206,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history. The most recent release c
 
 - Python >= 3.9
 - pandas >= 2.2
-- Internet connection (for CMIP6 data download; the custom CSV workflow runs offline)
+- Internet connection (for CMIP6 data download; the custom CSV and CH2025 workflows run offline)
 
 ## License
 

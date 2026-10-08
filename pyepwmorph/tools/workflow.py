@@ -8,7 +8,7 @@ import datetime
 import logging
 import os
 
-from pyepwmorph.models import access, assemble, coordinate, custom
+from pyepwmorph.models import access, assemble, ch2025, coordinate, custom
 from pyepwmorph.morph import procedures
 from pyepwmorph.tools import cache
 from pyepwmorph.tools import configuration as morph_config
@@ -152,6 +152,49 @@ def compile_custom_model_data(custom_data, variables, percentile=50):
     return model_data_dict
 
 
+def compile_ch2025_model_data(station_id, pathways, variables, percentiles):
+    """Load shipped CH2025 climatologies for one station.
+
+    Each warming level gets its own paired reference, built from the model
+    chains it shares with ``ref91-20`` (see
+    ``ch2025.build_ch2025_change_ensemble``). The reference is stored under
+    ``ch2025.reference_key(state)``; pass that as ``reference_scenario`` to
+    ``morph_epw``.
+
+    Parameters
+    ----------
+    station_id : str
+        Lower-case CH2025 station abbreviation.
+    pathways : list[str]
+        State ids. ``ref91-20`` may be included and is skipped.
+    variables : list[str]
+        CH2025 variable ids.
+    percentiles : list
+        Ensemble percentiles.
+
+    Returns
+    -------
+    dict[str, dict[str, pd.DataFrame]]
+        ``model_data_dict[key][variable]`` with percentile columns, where
+        *key* is a warming level or its paired reference key.
+    """
+    model_data_dict = {}
+    for pathway in pathways:
+        if pathway == ch2025.CH2025_REFERENCE:
+            continue
+        reference_key = ch2025.reference_key(pathway)
+        model_data_dict[pathway] = {}
+        model_data_dict[reference_key] = {}
+        for variable in variables:
+            logger.info("Loading CH2025 data for '%s' / '%s' / '%s'", station_id, pathway, variable)
+            reference, future = ch2025.build_ch2025_change_ensemble(
+                percentiles, variable, station_id, pathway,
+            )
+            model_data_dict[reference_key][variable] = reference
+            model_data_dict[pathway][variable] = future
+    return model_data_dict
+
+
 # ---------------------------------------------------------------------------
 # Morphing
 # ---------------------------------------------------------------------------
@@ -165,6 +208,8 @@ def morph_epw(
     pathway,
     percentile,
     reference_scenario="historical",
+    data_source="cmip6",
+    station_label=None,
 ):
     """Apply morphing procedures to an EPW file.
 
@@ -194,6 +239,12 @@ def morph_epw(
     reference_scenario : str
         Key in *model_data_dict* for the baseline/reference data.
         Defaults to ``"historical"``.
+    data_source : str
+        ``"cmip6"``, ``"custom"``, or ``"ch2025"``. CH2025 uses warming-level
+        climatologies directly and morphs humidity and wind from ``hurs``
+        and ``sfcWind``.
+    station_label : str or None
+        CH2025 station named in the EPW comment.
 
     Returns
     -------
@@ -225,13 +276,16 @@ def morph_epw(
 
     def _climatology(var):
         """Return the (baseline, future) monthly climatologies for a variable."""
+        baseline = _get_series(reference_scenario, var)
+        future = _get_series(pathway, var)
+        if data_source == "ch2025":
+            return assemble.calc_gwl_climatologies(baseline, future, var)
         return assemble.calc_model_climatologies(
-            baseline_range, target_range,
-            _get_series(reference_scenario, var), _get_series(pathway, var), var,
+            baseline_range, target_range, baseline, future, var,
         )
 
     morphed = {}
-    for variable in morph_config.resolve_variable_order(user_variables):
+    for variable in morph_config.resolve_variable_order(user_variables, data_source):
         if variable == 'Pressure':
             psl_base, psl_future = _climatology('psl')
             morphed['atmos_Pa'] = procedures.morph_psl(
@@ -250,12 +304,18 @@ def morph_epw(
             )
 
         elif variable == 'Humidity':
-            huss_base, huss_future = _climatology('huss')
-            morphed['relhum_percent'] = procedures.morph_relhum(
-                present['relhum_percent'], present['atmos_Pa'], present['drybulb_C'],
-                morphed['atmos_Pa'], morphed['drybulb_C'],
-                huss_future, huss_base,
-            )
+            if data_source == "ch2025":
+                hurs_base, hurs_future = _climatology('hurs')
+                morphed['relhum_percent'] = procedures.morph_relhum_direct(
+                    present['relhum_percent'], hurs_future, hurs_base,
+                )
+            else:
+                huss_base, huss_future = _climatology('huss')
+                morphed['relhum_percent'] = procedures.morph_relhum(
+                    present['relhum_percent'], present['atmos_Pa'], present['drybulb_C'],
+                    morphed['atmos_Pa'], morphed['drybulb_C'],
+                    huss_future, huss_base,
+                )
 
         elif variable == 'Dew Point':
             morphed['dewpoint_C'] = procedures.morph_dewpt(
@@ -263,13 +323,39 @@ def morph_epw(
             )
 
         elif variable == 'Wind':
-            vas_base, vas_future = _climatology('vas')
-            uas_base, uas_future = _climatology('uas')
-            morphed['windspd_ms'] = procedures.morph_wspd(
-                present['windspd_ms'],
-                vas_future, vas_base,
-                uas_future, uas_base,
+            if data_source == "ch2025":
+                wind_base, wind_future = _climatology('sfcWind')
+                morphed['windspd_ms'] = procedures.morph_wspd_direct(
+                    present['windspd_ms'], wind_future, wind_base,
+                )
+            else:
+                vas_base, vas_future = _climatology('vas')
+                uas_base, uas_future = _climatology('uas')
+                morphed['windspd_ms'] = procedures.morph_wspd(
+                    present['windspd_ms'],
+                    vas_future, vas_base,
+                    uas_future, uas_base,
+                )
+
+        elif variable == 'Radiation':
+            rsds_base, rsds_future = _climatology('rsds')
+            longitude = location['longitude']
+            latitude = location['latitude']
+            utc_offset = location['utc_offset']
+
+            glohor = procedures.morph_glohor(
+                present['glohorrad_Whm2'], rsds_future, rsds_base,
             )
+            difhor = procedures.calc_difhor(
+                longitude, latitude, utc_offset, glohor, present['exthorrad_Whm2'],
+            )
+            dirnor = procedures.calc_dirnor(
+                glohor, difhor, longitude, latitude, utc_offset,
+                extraterrestrial_dirnor=present['extdirrad_Whm2'],
+            )
+            morphed['glohorrad_Whm2'] = glohor
+            morphed['difhorrad_Whm2'] = difhor
+            morphed['dirnorrad_Whm2'] = dirnor
 
         elif variable == 'Clouds and Radiation':
             rsds_base, rsds_future = _climatology('rsds')
@@ -306,10 +392,22 @@ def morph_epw(
             epw_object.dataframe[column] = values
         # EPW headers are comma delimited, so the comment itself must not
         # contain commas or it will be split across fields on the next read
-        epw_object.add_comment(
-            f" morphed for {pathway} ({target_range[0]}-{target_range[1]}) with pyepwmorph"
-            f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]"
-        )
+        sky_note = ""
+        if "Radiation" in morph_config.resolve_variable_order(user_variables, data_source):
+            sky_note = " [sky cover left unmorphed]"
+        if data_source == "ch2025":
+            station_note = f" station {station_label}" if station_label else ""
+            comment = (
+                f" morphed for {pathway} with CH2025{station_note} with pyepwmorph"
+                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}"
+                f" {ch2025.CH2025_CITATION}"
+            )
+        else:
+            comment = (
+                f" morphed for {pathway} ({target_range[0]}-{target_range[1]}) with pyepwmorph"
+                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}"
+            )
+        epw_object.add_comment(comment)
 
     return epw_object
 
@@ -333,13 +431,15 @@ def morphing_workflow(
     custom_data=None,
     reference_scenario=None,
     time_slices=None,
+    ch2025_full_coverage=False,
     # backward-compat alias
     future_years=None,
 ):
     """Run the full morphing pipeline.
 
-    Supports both CMIP6 (``data_source="cmip6"``) and custom CSV data
-    (``data_source="custom"``).
+    Supports CMIP6 (``data_source="cmip6"``), custom CSV data
+    (``data_source="custom"``), and Swiss CH2025 warming levels
+    (``data_source="ch2025"``).
 
     Parameters
     ----------
@@ -364,20 +464,25 @@ def morphing_workflow(
     write_file : bool
         Whether to write morphed EPW files to disk.
     data_source : str
-        ``"cmip6"`` or ``"custom"``.
+        ``"cmip6"``, ``"custom"``, or ``"ch2025"``. CH2025 does not use
+        ``target_years``; pathways are warming levels such as ``"gwl2.0"``.
     custom_data : dict or None
         Nested dict for custom data (see ``MorphConfig``).
     reference_scenario : str or None
         Baseline scenario key.
     time_slices : dict or None
         Optional per-pathway ``(start, end)`` temporal bounds for CMIP6 data.
+    ch2025_full_coverage : bool
+        CH2025 only. Match the site only against stations that carry every
+        CH2025 variable (see ``MorphConfig``).
     future_years : list[int] or None
         Deprecated alias for *target_years*.
 
     Returns
     -------
     dict
-        Nested ``result_data[year][pathway][percentile]`` -> morphed Epw.
+        For CMIP6 and custom data, ``result_data[year][pathway][percentile]``.
+        For CH2025, ``result_data[warming_level][percentile]``.
     """
     config_object = morph_config.MorphConfig(
         project_name, epw_file, user_variables, user_pathways, percentiles,
@@ -388,6 +493,7 @@ def morphing_workflow(
         data_source=data_source,
         custom_data=custom_data,
         reference_scenario=reference_scenario,
+        ch2025_full_coverage=ch2025_full_coverage,
         future_years=future_years,
     )
 
@@ -400,6 +506,14 @@ def morphing_workflow(
             config_object.custom_data,
             config_object.model_variables,
             percentile=default_pctile,
+        )
+    elif config_object.data_source == "ch2025":
+        station = config_object.ch2025_station
+        year_model_dict = compile_ch2025_model_data(
+            station["station_id"],
+            config_object.model_pathways,
+            config_object.model_variables,
+            config_object.percentiles,
         )
     else:
         year_model_dict = iterate_compile_model_data(
@@ -415,6 +529,43 @@ def morphing_workflow(
     # --- Morph for each target year x pathway x percentile ---
     target_pathways = [p for p in config_object.model_pathways if p != ref_scenario]
     result_data = {}
+
+    if "Radiation" in config_object.resolved_variables:
+        logger.warning(
+            "Radiation morphs shortwave radiation while leaving sky cover at "
+            "baseline values. EnergyPlus derives sky temperature from opaque "
+            "sky cover when horizontal infrared is absent, so the longwave "
+            "side of this file does not follow the shortwave change."
+        )
+
+    if config_object.data_source == "ch2025":
+        station = config_object.ch2025_station
+        station_label = f"{station['station_id']} {station['name']}".replace(",", " ")
+        for pathway in target_pathways:
+            result_data[pathway] = {}
+            for percentile in config_object.percentiles:
+                percentile_key = str(percentile)
+                morphed_data = morph_epw(
+                    config_object.epw,
+                    config_object.resolved_variables,
+                    config_object.baseline_range,
+                    ch2025.CH2025_BASELINE_RANGE,
+                    year_model_dict,
+                    pathway,
+                    percentile,
+                    reference_scenario=ch2025.reference_key(pathway),
+                    data_source="ch2025",
+                    station_label=station_label,
+                )
+                result_data[pathway][percentile_key] = morphed_data
+                if write_file and config_object.output_directory:
+                    morphed_data.write_to_file(
+                        os.path.join(
+                            config_object.output_directory,
+                            f"{pathway}_{percentile_key}.epw",
+                        )
+                    )
+        return result_data
 
     for target_year in config_object.target_years:
         year_key = str(target_year)

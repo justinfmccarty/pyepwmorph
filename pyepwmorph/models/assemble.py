@@ -109,3 +109,27 @@ def calc_model_climatologies(baseline_range, future_range, baseline_data, future
 
 
     return baseline_means, future_means
+
+
+def calc_gwl_climatologies(baseline_data, future_data, variable):
+    """Return CH2025 monthly climatologies unchanged.
+
+    A warming-level state is already a stationary 30-year sample, so there
+    is no year range to slice the way ``calc_model_climatologies`` does for
+    a transient CMIP6 run.
+
+    Parameters
+    ----------
+    baseline_data : pd.Series
+        Twelve monthly values for the reference state.
+    future_data : pd.Series
+        Twelve monthly values for the warming-level state.
+    variable : str
+        Name used to rename both series.
+
+    Returns
+    -------
+    tuple
+        ``(baseline_data, future_data)``, each renamed to *variable*.
+    """
+    return baseline_data.rename(variable), future_data.rename(variable)

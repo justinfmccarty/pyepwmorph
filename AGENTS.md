@@ -33,6 +33,7 @@ CI (`.github/workflows/ci.yml`) runs ruff, pytest on Python 3.9–3.13, and a bu
   `ch2025` (Swiss station scenarios, offline)
 - `pyepwmorph/morph/procedures.py` — per-variable morphing maths
 - `pyepwmorph/data/` — shipped CH2025 parquet tables (included in the wheel via `artifacts`)
+- `examples/` — Justin's personal dev scripts and outputs; mostly untracked on purpose (listed in `.git/info/exclude` locally). Don't commit or clean them up.
 
 Pipeline: `MorphConfig` (reads the EPW, resolves variables and pathways) →
 compile model data per pathway × variable (cache → fetch → coordinate →
@@ -56,6 +57,9 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 - Python 3.9 is the floor: no `X | Y` type unions, no `match`. Keep
   `typing.Dict/List` where ruff UP006/UP035 are ignored.
 - MIT licence. Do not copy code from GPL/AGPL projects (3.0.0 removed one such module).
+- CH2025 percentiles are taken of per-chain changes over shared chains
+  (`build_ch2025_change_ensemble`), never by differencing two separately
+  reduced states.
 - Data attribution: CH2025 is CC-BY 4.0 (MeteoSwiss & ETH Zurich); keep the
   citation in `models/ch2025.py` and the README.
 
@@ -73,7 +77,15 @@ CHANGELOG, and update the app in the same piece of work.
   and attributes `model_sources`, `model_pathways`, `model_variables`,
   `resolved_variables`, `reference_scenario`, `baseline_range`,
   `target_years`, `percentiles`, `output_directory`, `location`, `epw`
-- `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app)
+- CH2025 (since 3.1.0): `MorphConfig(..., data_source="ch2025",
+  ch2025_full_coverage=True)` and its attributes `ch2025_station`
+  (`station_id`, `name`, `distance_km`, `elevation_difference_m`,
+  `weak_match`) and `ch2025_notes`; `morphing_workflow(...,
+  data_source="ch2025", ch2025_full_coverage=True, write_file=True)`
+  returning `result[warming_level][percentile]`; pathway labels
+  `"GWL 1.5"` ... `"GWL 3.0"` and output names `{gwlX.Y}_{percentile}.epw`;
+  `models.ch2025.CH2025_BBOX`
+- `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app; 3.1.0 added `Radiation`)
 - `tools.workflow.compile_climate_model_data(model_sources, pathway, variable,
   longitude, latitude, percentiles, time_slices=None)`
 - `tools.workflow.morph_epw(epw, variables, baseline_range, target_range,

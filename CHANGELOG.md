@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.1.0
+
+Adds Swiss CH2025 warming-level scenarios and a radiation option that leaves
+sky cover alone. Existing CMIP6 and custom-data morphs are unchanged.
+
+### Added
+
+- **CH2025 station scenarios** (`data_source="ch2025"`). MeteoSwiss CH2025
+  monthly climatologies for 86 Swiss stations ship with the package
+  (`pyepwmorph/data/*.parquet`, about 3 MB), so the morph runs offline.
+  Pathways are global warming levels, `"GWL 1.5"`, `"GWL 2.0"`,
+  `"GWL 2.5"` and `"GWL 3.0"` (or `gwl1.5` ... `gwl3.0`), relative to
+  1991-2020. There is no target year; outputs are named
+  `{warming_level}_{percentile}.epw` and `morphing_workflow` returns
+  `result[warming_level][percentile]`.
+- CH2025 supports Temperature, Humidity (relative humidity stretched
+  directly), Wind (scalar surface wind), Radiation and Dew Point. Pressure
+  and Clouds and Radiation raise a `ValueError`, as does an EPW outside the
+  CH2025 domain.
+- The site is matched to the nearest station with an elevation penalty.
+  `ch2025_full_coverage=True` (on `MorphConfig` and `morphing_workflow`)
+  restricts the match to stations that carry every CH2025 variable.
+- Percentiles come from each model chain's own change, over the chains that
+  reach the warming level. Differencing separately reduced states mixes
+  chains and, at the 10th and 90th percentiles, can change the size and even
+  the sign of the signal.
+- `MorphConfig.ch2025_station` (with `distance_km`,
+  `elevation_difference_m`, `weak_match`) and `MorphConfig.ch2025_notes`
+  (plain-language caveats) for callers that show results to users.
+- A `UserWarning` when the EPW's years fall outside 1991-2020, recommending
+  a TMY built from 1991-2020 data.
+- Morphed EPW comments name the CH2025 station and carry the CC-BY 4.0
+  attribution.
+- **`Radiation` variable** for every data source: morphs global, diffuse and
+  direct radiation from `rsds` and leaves sky cover at baseline values. The
+  EPW comment and a log warning note that longwave sky temperature will not
+  follow the shortwave change.
+- `scripts/build_ch2025_table.py` rebuilds the shipped tables from MeteoSwiss.
+
+### Changed
+
+- `VARIABLE_MAPPING` gains `"Radiation": ["rsds"]` and `MORPH_ORDER` gains
+  `"Radiation"`. Code that copies these tables should add the entry.
+- `resolve_variable_order` and `morph_epw` take an optional `data_source`
+  argument (default `"cmip6"`); `morph_epw` also takes `station_label`.
+- The wheel build includes `pyepwmorph/data/*.parquet`.
+
 ## 3.0.0
 
 This release corrects several morphing calculations. **Morphed humidity, dew
