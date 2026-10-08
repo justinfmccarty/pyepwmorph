@@ -7,6 +7,8 @@ Container for all of the individual morphing calculations which can be traced ba
         55 514–524 ISSN 0960-1481 URL https://www.sciencedirect.com/science/article/pii/S0960148113000232
 
 """
+import calendar
+
 import numpy as np
 import pandas as pd
 
@@ -33,10 +35,17 @@ def _index_of(*candidates):
 
 
 def _year_of(index):
-    """Return the year of a DatetimeIndex, or the default solar year."""
+    """Return a non-leap year to build solar geometry for the data in *index*.
+
+    EPW files always hold 8760 hours with no 29 February, so their calendar
+    is a non-leap year's even when the first data row says 2016. Building
+    daily series for a leap year would add an empty 29 February and shift
+    every later day by one, so a leap year is replaced by the year before.
+    """
     if index is None or len(index) == 0:
         return morph_solar_utils.DEFAULT_SOLAR_YEAR
-    return int(index[0].year)
+    year = int(index[0].year)
+    return year - 1 if calendar.isleap(year) else year
 
 
 def _as_series(values, index, name, decimals=2):

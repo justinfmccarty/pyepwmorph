@@ -49,6 +49,8 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 - `relative_delta` returns a ratio, not a percentage. Apply it as a ratio.
 - Dependencies are resolved transitively and written to the output, so a
   morphed EPW stays internally consistent (`MorphConfig.resolved_variables`).
+- EPWs have no 29 February. Solar and daily calculations use a non-leap
+  year (`procedures._year_of`), whatever year the first data row carries.
 - Solar geometry uses the fixed UTC offset from the EPW LOCATION line, never a
   named timezone (no daylight saving in weather data).
 - Tests never touch the network. Mock or use synthetic data.
@@ -65,7 +67,7 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 
 ## Downstream contract (boundary-conditions backend)
 
-The app depends on `pyepwmorph>=3.0.0` and uses these directly. Changing any
+The app depends on `pyepwmorph>=3.2.0` and uses these directly. Changing any
 of them is a breaking change for the app: bump accordingly, note it in the
 CHANGELOG, and update the app in the same piece of work.
 
@@ -85,6 +87,8 @@ CHANGELOG, and update the app in the same piece of work.
   returning `result[warming_level][percentile]`; pathway labels
   `"GWL 1.5"` ... `"GWL 3.0"` and output names `{gwlX.Y}_{percentile}.epw`;
   `models.ch2025.CH2025_BBOX`
+- `tools.io.write_period_of_record(path, start, end)` (since 3.2.0; the app's
+  `wfb_task` stamps weather-file-builder output with it)
 - `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app; 3.1.0 added `Radiation`)
 - `tools.workflow.compile_climate_model_data(model_sources, pathway, variable,
   longitude, latitude, percentiles, time_slices=None)`

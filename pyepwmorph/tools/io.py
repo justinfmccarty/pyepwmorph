@@ -109,6 +109,62 @@ def epw_baseline_range(file_content: list[str]) -> tuple[int, int]:
     return (int(years.min()), int(years.max()))
 
 
+#: Matches a "Period of Record" statement, as ClimateOneBuilding writes it.
+_PERIOD_OF_RECORD_RE = re.compile(r"\s*;?\s*Period of Record\s*=?\s*\d{4}\s*-\s*\d{4}")
+
+
+def epw_data_years(file_content: list[str]) -> list[int]:
+    """Return the distinct years in an EPW's data rows, sorted.
+
+    A typical year stitches months from different years, so these are the
+    years the months were taken from, not the period the file was built
+    from. Use ``epw_baseline_range`` when the header states that period.
+    """
+    header_len = _find_header_length(file_content)
+    years = set()
+    for line in file_content[header_len:]:
+        field = line.split(",", 1)[0].strip()
+        if field.isdigit():
+            years.add(int(field))
+    if not years:
+        raise ValueError("No data rows found in EPW file")
+    return sorted(years)
+
+
+def write_period_of_record(filepath: str, start_year: int, end_year: int) -> None:
+    """Record the years an EPW was built from in its COMMENTS 1 header.
+
+    Writes ``Period of Record=start-end`` in the form ClimateOneBuilding uses,
+    which ``epw_baseline_range`` reads back. Any existing statement is
+    replaced. The data rows are not touched. If the file has no COMMENTS 1
+    line, one is inserted before COMMENTS 2 or DATA PERIODS.
+    """
+    lines = read_epw_string(filepath)
+    header_len = _find_header_length(lines)
+    statement = f"Period of Record={int(start_year)}-{int(end_year)}"
+
+    for i, line in enumerate(lines[:header_len]):
+        if not line.startswith("COMMENTS 1"):
+            continue
+        value = line.rstrip("\r\n")[len("COMMENTS 1"):].lstrip(",")
+        quoted = len(value) >= 2 and value.startswith('"') and value.endswith('"')
+        inner = value[1:-1] if quoted else value
+        inner = _PERIOD_OF_RECORD_RE.sub("", inner).strip().rstrip(";").strip()
+        inner = f"{inner}; {statement}" if inner else statement
+        lines[i] = f'COMMENTS 1,"{inner}"\n' if quoted else f"COMMENTS 1,{inner}\n"
+        break
+    else:
+        position = next(
+            (i for i, line in enumerate(lines[:header_len])
+             if line.startswith(("COMMENTS 2", "DATA PERIODS"))),
+            header_len,
+        )
+        lines.insert(position, f"COMMENTS 1,{statement}\n")
+
+    with open(filepath, "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+
+
 def read_epw_dataframe(filepath: str, normalize_hours: bool = True) -> pd.DataFrame:
     """Read an EPW file into a pandas DataFrame with an 8760-hour index.
 
@@ -247,10 +303,24 @@ class Epw:
         with open(filepath, "w", encoding="utf-8") as fh:
             fh.write(self.make_epw_string())
 
-    def detect_baseline_range(self) -> tuple[int, int]:
-        """Detect the baseline year range from EPW comments or data."""
+    def detect_baseline_period(self) -> tuple[tuple[int, int], str]:
+        """Detect the baseline years and say where they came from.
+
+        Returns
+        -------
+        tuple
+            ``((start, end), source)``. *source* is ``"comments"`` when the
+            header states a Period of Record, which is the period the file
+            was built from. Otherwise it is ``"data"`` and the range spans
+            the years in the data rows, which for a typical year are only
+            the years its months were taken from.
+        """
         try:
-            return epw_baseline_range(self.string)
+            return epw_baseline_range(self.string), "comments"
         except (ValueError, IndexError):
-            years = self.dataframe['year'].to_numpy()
-            return (int(years.min()), int(years.max()))
+            years = epw_data_years(self.string)
+            return (years[0], years[-1]), "data"
+
+    def detect_baseline_range(self) -> tuple[int, int]:
+        """Detect the baseline year range from EPW comments or data rows."""
+        return self.detect_baseline_period()[0]

@@ -93,10 +93,8 @@ def reference_key(state: str) -> str:
 
 
 def baseline_matches(baseline_range) -> bool:
-    """Return whether an EPW baseline lies inside the CH2025 reference period."""
-    start, end = (int(year) for year in baseline_range)
-    ref_start, ref_end = CH2025_BASELINE_RANGE
-    return ref_start <= start and end <= ref_end
+    """Return whether an EPW baseline is exactly the CH2025 reference period."""
+    return tuple(int(year) for year in baseline_range) == CH2025_BASELINE_RANGE
 
 
 def in_switzerland(latitude: float, longitude: float) -> bool:

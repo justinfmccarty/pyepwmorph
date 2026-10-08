@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.2.0
+
+Fixes radiation morphs on leap-year EPWs and the baseline fallback, and
+tightens the CH2025 baseline checks.
+
+### Fixed
+
+- **Radiation morphs failed on EPWs whose first data row is a leap year**
+  (`ValueError: Expected 365 values, got 366`). EPWs have no 29 February, but
+  the solar geometry and daily clearness were built for the leap year, which
+  added an empty day. A leap year is now replaced by the year before for
+  solar calculations. This affected Clouds and Radiation since 3.0.0 and
+  Radiation in 3.1.0.
+- **The baseline fallback collapsed to a single year.** Without a Period of
+  Record in the header, `detect_baseline_range` read the year column after
+  `Epw` had set every row to the first year, so it returned e.g.
+  `(2011, 2011)` and a CMIP6 morph compared against a one-year model
+  baseline. It now spans the years in the data rows. **CMIP6 files morphed
+  from EPWs without a Period of Record (for example from weather-file-builder)
+  change and should be regenerated.**
+
+### Changed
+
+- CH2025 baseline checks are stricter. A stated Period of Record (or a
+  `baseline_range` passed in) must equal 1991-2020 exactly; 3.1.0 accepted
+  any range inside it. When the header states no period, a separate warning
+  says the period could not be detected, and the mismatch warning still
+  fires if the data rows' years fall outside 1991-2020. Each warning is also
+  a line in `MorphConfig.ch2025_notes`.
+
+### Added
+
+- `Epw.detect_baseline_period()` returns the baseline years and whether they
+  came from the header (`"comments"`) or the data rows (`"data"`);
+  `MorphConfig.baseline_source` records it (`"user"` when passed in).
+- `tools.io.write_period_of_record(path, start, end)` writes
+  `Period of Record=start-end` into COMMENTS 1 without touching the data,
+  for files built by tools that do not record their period.
+
 ## 3.1.0
 
 Adds Swiss CH2025 warming-level scenarios and a radiation option that leaves

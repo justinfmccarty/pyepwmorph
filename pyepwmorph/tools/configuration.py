@@ -70,6 +70,46 @@ MORPH_ORDER = [
 ]
 
 
+def _ch2025_baseline_notes(baseline_range, source, reference_range, matches):
+    """Plain-language caveats about how the EPW's period compares with 1991-2020.
+
+    A stated period (header or caller) must equal the reference exactly. When
+    only the data rows are available, the period cannot be confirmed, which
+    is its own caveat; years outside the reference are also a mismatch.
+    """
+    start, end = (int(year) for year in baseline_range)
+    ref_start, ref_end = reference_range
+    notes = []
+
+    if source == "data":
+        notes.append(
+            f"The period this weather file was built from is not stated in its header, "
+            f"so it cannot be checked against the CH2025 reference period "
+            f"({ref_start}-{ref_end}). Its months come from {start}-{end}. Check the "
+            f"source of the file to confirm the period it represents."
+        )
+        mismatched = not (ref_start <= start and end <= ref_end)
+        described = f"The weather file's months come from {start}-{end}"
+    else:
+        mismatched = not matches((start, end))
+        described = f"The weather file was built from {start}-{end}"
+
+    if mismatched:
+        midpoint = (start + end) / 2.0
+        ref_midpoint = (ref_start + ref_end) / 2.0
+        if midpoint > ref_midpoint:
+            effect = "It is centred later and already holds part of that warming, so the morphed file may overstate it."
+        elif midpoint < ref_midpoint:
+            effect = "It is centred earlier, so the morphed file may understate the warming."
+        else:
+            effect = "It spans different years, so the change may not fit it exactly."
+        notes.append(
+            f"{described}, but CH2025 changes are measured from {ref_start}-{ref_end}. "
+            f"{effect} For CH2025, use a TMY built from {ref_start}-{ref_end} data."
+        )
+    return notes
+
+
 def _dependencies_for(data_source):
     if data_source == "ch2025":
         return CH2025_VARIABLE_DEPENDENCIES
@@ -170,7 +210,12 @@ class MorphConfig:
         ``elevation_difference_m`` and ``weak_match``.
     ch2025_notes : list[str]
         CH2025 only. Plain-language caveats about this morph (baseline
-        mismatch, weak station match), for display to users.
+        mismatch, undetectable baseline, weak station match), for display
+        to users.
+    baseline_source : str
+        Where ``baseline_range`` came from: ``"user"`` (passed in),
+        ``"comments"`` (the EPW's Period of Record) or ``"data"`` (the span
+        of years in the data rows).
 
     Backward Compatibility
     ----------------------
@@ -272,7 +317,9 @@ class MorphConfig:
         self.location['elevation'] = self.epw.location['elevation']
         self.location['utc_offset'] = self.epw.location['utc_offset']
         if self.baseline_range is None:
-            self.baseline_range = self.epw.detect_baseline_range()
+            self.baseline_range, self.baseline_source = self.epw.detect_baseline_period()
+        else:
+            self.baseline_source = "user"
 
         if self.data_source == "ch2025":
             from pyepwmorph.models.ch2025 import (
@@ -291,24 +338,10 @@ class MorphConfig:
                     f"CH2025 covers longitude {west} to {east} and latitude {south} to {north}. "
                     f"Use data_source='cmip6' for locations outside that domain."
                 )
-            if not baseline_matches(self.baseline_range):
-                start, end = (int(year) for year in self.baseline_range)
-                ref_start, ref_end = CH2025_BASELINE_RANGE
-                if end > ref_end:
-                    effect = (
-                        f"Years after {ref_end} already contain part of that warming, "
-                        f"so the morphed file may overstate it."
-                    )
-                else:
-                    effect = (
-                        f"Years before {ref_start} were cooler, so the morphed file may "
-                        f"understate the warming."
-                    )
-                note = (
-                    f"The EPW covers {start}-{end} but CH2025 changes are measured from "
-                    f"{ref_start}-{ref_end}. {effect} For CH2025, use a TMY built from "
-                    f"{ref_start}-{ref_end} data."
-                )
+            for note in _ch2025_baseline_notes(
+                self.baseline_range, self.baseline_source,
+                CH2025_BASELINE_RANGE, baseline_matches,
+            ):
                 self.ch2025_notes.append(note)
                 warnings.warn(note, UserWarning, stacklevel=2)
 
