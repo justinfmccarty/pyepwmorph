@@ -1299,8 +1299,10 @@ class TestBaselinePeriod:
 class TestLeapYearRadiation:
     """EPWs whose first data row is a leap year have no 29 February."""
 
-    @pytest.mark.parametrize("variable", ["Radiation", "Clouds and Radiation"])
-    def test_leap_year_epw_matches_its_non_leap_twin(self, tmp_path, identity_climate_data, variable):
+    @pytest.mark.parametrize("variables", [
+        ["Radiation"], ["Clouds and Radiation"], ALL_VARIABLES,
+    ], ids=["radiation", "clouds-and-radiation", "all"])
+    def test_leap_year_epw_matches_its_non_leap_twin(self, tmp_path, identity_climate_data, variables):
         from pyepwmorph.tools.workflow import morphing_workflow
 
         results = {}
@@ -1309,7 +1311,7 @@ class TestLeapYearRadiation:
             result = morphing_workflow(
                 project_name=f"leap{year}",
                 epw_file=path,
-                user_variables=[variable],
+                user_variables=variables,
                 user_pathways=["target"],
                 percentiles=[50],
                 target_years=[2050],
@@ -1320,13 +1322,34 @@ class TestLeapYearRadiation:
                 write_file=False,
             )
             results[year] = result["2050"]["target"]["50"].dataframe
-        for column in ("glohorrad_Whm2", "difhorrad_Whm2", "dirnorrad_Whm2"):
+        columns = [
+            "drybulb_C", "dewpoint_C", "relhum_percent", "atmos_Pa", "windspd_ms",
+            "glohorrad_Whm2", "difhorrad_Whm2", "dirnorrad_Whm2",
+            "totskycvr_tenths", "opaqskycvr_tenths",
+        ]
+        for column in columns:
             np.testing.assert_allclose(
                 results[2016][column].to_numpy(dtype=float),
                 results[2015][column].to_numpy(dtype=float),
                 atol=1.0,
                 err_msg=column,
             )
+
+    def test_ch2025_morphs_a_leap_year_epw(self, tmp_path):
+        from pyepwmorph.tools.workflow import morphing_workflow
+
+        path = _epw_variant(tmp_path, "leap_swiss.epw", first_year=2016, swiss=True)
+        with pytest.warns(UserWarning):
+            result = morphing_workflow(
+                project_name="leap-ch2025",
+                epw_file=path,
+                user_variables=["Temperature", "Humidity", "Wind", "Radiation", "Dew Point"],
+                user_pathways=["GWL 2.0"],
+                percentiles=[50],
+                write_file=False,
+                data_source="ch2025",
+            )
+        assert len(result["gwl2.0"]["50"].dataframe) == 8760
 
 
 class TestCH2025:
