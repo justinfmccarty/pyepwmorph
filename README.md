@@ -113,6 +113,29 @@ The signal is the change from the 1991-2020 reference climate to the chosen warm
 
 CH2025 data: MeteoSwiss & ETH Zurich (2025), Climate CH2025 - Daily Datasets, CC-BY 4.0, https://doi.org/10.18751/climate/scenarios/ch2025/data/1.0/
 
+### Measured data (actual meteorological year)
+
+Turn one real year of station measurements, hourly or 10-minute, into an EPW
+for calibration. The table needs fixed column names and hour-ending
+timestamps; `pyepwmorph.tools.amy.describe_columns()` lists them.
+
+```python
+from pyepwmorph.tools import amy, amy_meteoswiss
+
+table = amy_meteoswiss.read_meteoswiss_ogd("ogd-smn_sma_t_historical_2020-2029.csv")  # UTC, hour-ending
+location = amy_meteoswiss.meteoswiss_location("ogd-smn_meta_stations.csv", "SMA")
+report = amy.station_table_to_epw(
+    table, location, 2025, "zurich_fluntern_2025.epw",
+    source_name="MeteoSwiss Zurich-Fluntern", attribution=amy_meteoswiss.ATTRIBUTION,
+)
+print(report.to_text())
+```
+
+Other networks only need a table with the documented columns and
+`timestamp_label` / `table_utc_offset` set to match their clock. Direct and
+diffuse irradiance and sky cover are derived when the station does not measure
+them (the report and the EPW header say how).
+
 ## Climate scenarios
 
 | Scenario              | SSP    | Description                             | Expected warming |

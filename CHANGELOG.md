@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.3.0
+
+Adds an actual meteorological year (AMY) builder: one real calendar year of
+station measurements becomes an EPW, for model calibration. Morphing is
+unchanged.
+
+### Added
+
+- `tools.amy`: `build_amy_dataframe`, `write_amy_epw` and `station_table_to_epw`
+  turn a table of hourly or 10-minute station data into an 8760-row EPW. The
+  input contract (column names, units, hour-ending timestamps and the clock
+  they use) is in the module docstring and `describe_columns()`. Short gaps
+  are interpolated, long gaps raise. The header records
+  `Period of Record=<year>-<year>` and the methods used.
+- Direct and diffuse irradiance are derived from measured global irradiance
+  when the station has no components. With sunshine duration (and 10-minute
+  data) a shipped lookup table (`pyepwmorph/data/amy_diffuse_table.parquet`,
+  fitted by `scripts/build_amy_diffuse_table.py` on MeteoSwiss Affoltern and
+  Kloten) gives an hourly diffuse error of about 16% (held-out year and
+  station), against about 30% for DIRINT/Erbs. Without sunshine duration the
+  DIRINT model is used. The tables describe the Swiss Plateau; elsewhere pass
+  `decomposition="dirint"` or measured components.
+- Total sky cover is derived from the clear-sky index in daylight and from
+  downwelling longwave at other times. Opaque sky cover equals total.
+- `tools.amy_meteoswiss`: reader for MeteoSwiss ogd-smn station CSVs and a
+  station-metadata location helper.
+
 ## 3.2.0
 
 Fixes radiation morphs on leap-year EPWs and the baseline fallback, and

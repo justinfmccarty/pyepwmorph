@@ -28,11 +28,15 @@ CI (`.github/workflows/ci.yml`) runs ruff, pytest on Python 3.9–3.13, and a bu
 - `pyepwmorph/tools/io.py` — EPW reader/writer (`Epw`, `read_epw_dataframe`, `epw_location`)
 - `pyepwmorph/tools/psychrometrics.py` — vectorised ASHRAE 2017 formulas (PsychroLib reference)
 - `pyepwmorph/tools/solar.py`, `utilities.py`, `cache.py`
+- `pyepwmorph/tools/amy.py` — station table to EPW (actual meteorological year); input
+  column contract in its docstring. `amy_meteoswiss.py` is the MeteoSwiss ogd-smn adapter.
+  `scripts/build_amy_diffuse_table.py` refits `pyepwmorph/data/amy_diffuse_table.parquet`
+  (needs scikit-learn, not a dependency) using the module's own feature code.
 - `pyepwmorph/models/` — `access` (Pangeo catalogue), `coordinate` (grid-cell
   selection), `assemble` (ensembles, climatologies), `custom` (CSV input),
   `ch2025` (Swiss station scenarios, offline)
 - `pyepwmorph/morph/procedures.py` — per-variable morphing maths
-- `pyepwmorph/data/` — shipped CH2025 parquet tables (included in the wheel via `artifacts`)
+- `pyepwmorph/data/` — shipped parquet tables: CH2025 and the AMY diffuse table (included in the wheel via `artifacts`)
 - `examples/` — Justin's personal dev scripts and outputs; mostly untracked on purpose (listed in `.git/info/exclude` locally). Don't commit or clean them up.
 
 Pipeline: `MorphConfig` (reads the EPW, resolves variables and pathways) →
@@ -49,6 +53,8 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 - `relative_delta` returns a ratio, not a percentage. Apply it as a ratio.
 - Dependencies are resolved transitively and written to the output, so a
   morphed EPW stays internally consistent (`MorphConfig.resolved_variables`).
+- AMY timestamps are hour-ending; an EPW row of hour `h` is the interval ending `h:00` local
+  standard time, and station tables must state their clock (`table_utc_offset`). No daylight saving.
 - EPWs have no 29 February. Solar and daily calculations use a non-leap
   year (`procedures._year_of`), whatever year the first data row carries.
 - Solar geometry uses the fixed UTC offset from the EPW LOCATION line, never a
