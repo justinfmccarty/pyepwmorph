@@ -1,11 +1,16 @@
-"""Tests for the AMY (actual meteorological year) builder. Fully offline, synthetic data."""
+"""Tests for the deprecated AMY builder (moved to weather-file-builder). Fully offline, synthetic data."""
+
+import importlib
+import warnings
 
 import numpy as np
 import pandas as pd
 import pvlib
 import pytest
 
-from pyepwmorph.tools import amy, amy_meteoswiss
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from pyepwmorph.tools import amy, amy_meteoswiss
 from pyepwmorph.tools.io import EPW_COLUMN_NAMES, Epw, epw_baseline_range, read_epw_string
 
 LOCATION = dict(
@@ -333,3 +338,9 @@ def test_meteoswiss_adapter(tmp_path):
     assert location["site"] == "Zürich-Testberg"
     with pytest.raises(ValueError, match="not found"):
         amy_meteoswiss.meteoswiss_location(str(stations), "NOPE")
+
+
+@pytest.mark.parametrize("module", [amy, amy_meteoswiss])
+def test_import_warns_that_the_module_moved(module):
+    with pytest.warns(DeprecationWarning, match="weather-file-builder"):
+        importlib.reload(module)

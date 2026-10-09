@@ -1,5 +1,9 @@
 """Build an EPW from measured weather station data (an actual meteorological year).
 
+.. deprecated:: 3.4.0
+   Moved to ``weather_file_builder.amy`` (weather-file-builder 2.1). This
+   copy is frozen and will be removed in pyepwmorph 4.0.
+
 A typical meteorological year stitches months from many years. An *actual*
 meteorological year (AMY) is one real calendar year of measurements, which is
 what building energy model calibration needs. This module turns a table of
@@ -72,6 +76,7 @@ Short gaps are interpolated and long gaps raise an error (see
 import datetime as _dt
 import logging
 import unicodedata
+import warnings as _warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.resources import files
@@ -83,6 +88,14 @@ import pvlib
 
 from pyepwmorph.tools import psychrometrics
 from pyepwmorph.tools.io import EPW_COLUMN_NAMES
+
+_warnings.warn(
+    "pyepwmorph.tools.amy is deprecated and will be removed in pyepwmorph 4.0. "
+    "It has moved to weather-file-builder (pip install 'weather-file-builder>=2.1'): "
+    "use weather_file_builder.amy.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
 

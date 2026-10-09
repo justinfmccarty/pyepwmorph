@@ -1,7 +1,9 @@
 # pyepwmorph
 
 Python library that morphs EnergyPlus Weather (EPW) files with climate-model
-data (Belcher et al. 2005 shift/stretch, Jentsch et al. 2013). Published on
+data (Belcher et al. 2005 shift/stretch, Jentsch et al. 2013). Building
+weather files from records (ERA5, station data; typical, extreme and actual
+years) belongs in weather-file-builder, which depends on pyepwmorph for EPW I/O. Published on
 PyPI. Its main consumer is the Boundary Conditions web app
 (github.com/justinfmccarty/boundary-conditions), which imports internals as
 well as the public workflow. See "Downstream contract" below.
@@ -28,15 +30,16 @@ CI (`.github/workflows/ci.yml`) runs ruff, pytest on Python 3.9–3.13, and a bu
 - `pyepwmorph/tools/io.py` — EPW reader/writer (`Epw`, `read_epw_dataframe`, `epw_location`)
 - `pyepwmorph/tools/psychrometrics.py` — vectorised ASHRAE 2017 formulas (PsychroLib reference)
 - `pyepwmorph/tools/solar.py`, `utilities.py`, `cache.py`
-- `pyepwmorph/tools/amy.py` — station table to EPW (actual meteorological year); input
-  column contract in its docstring. `amy_meteoswiss.py` is the MeteoSwiss ogd-smn adapter.
-  `scripts/build_amy_diffuse_table.py` refits `pyepwmorph/data/amy_diffuse_table.parquet`
-  (needs scikit-learn, not a dependency) using the module's own feature code.
+- `pyepwmorph/tools/amy.py`, `amy_meteoswiss.py` — **deprecated in 3.4.0, removed in 4.0**.
+  Frozen copies of the AMY builder, which now lives in weather-file-builder
+  (`weather_file_builder.amy`, with ISO 15927-4 station typical years). Do not fix or
+  extend them here; `scripts/build_amy_diffuse_table.py` and
+  `pyepwmorph/data/amy_diffuse_table.parquet` go with them.
 - `pyepwmorph/models/` — `access` (Pangeo catalogue), `coordinate` (grid-cell
   selection), `assemble` (ensembles, climatologies), `custom` (CSV input),
   `ch2025` (Swiss station scenarios, offline)
 - `pyepwmorph/morph/procedures.py` — per-variable morphing maths
-- `pyepwmorph/data/` — shipped parquet tables: CH2025 and the AMY diffuse table (included in the wheel via `artifacts`)
+- `pyepwmorph/data/` — shipped parquet tables: CH2025 and the deprecated AMY diffuse table (included in the wheel via `artifacts`)
 - `examples/` — Justin's personal dev scripts and outputs; mostly untracked on purpose (listed in `.git/info/exclude` locally). Don't commit or clean them up.
 
 Pipeline: `MorphConfig` (reads the EPW, resolves variables and pathways) →
@@ -53,8 +56,6 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 - `relative_delta` returns a ratio, not a percentage. Apply it as a ratio.
 - Dependencies are resolved transitively and written to the output, so a
   morphed EPW stays internally consistent (`MorphConfig.resolved_variables`).
-- AMY timestamps are hour-ending; an EPW row of hour `h` is the interval ending `h:00` local
-  standard time, and station tables must state their clock (`table_utc_offset`). No daylight saving.
 - EPWs have no 29 February. Solar and daily calculations use a non-leap
   year (`procedures._year_of`), whatever year the first data row carries.
 - Solar geometry uses the fixed UTC offset from the EPW LOCATION line, never a
@@ -93,8 +94,8 @@ CHANGELOG, and update the app in the same piece of work.
   returning `result[warming_level][percentile]`; pathway labels
   `"GWL 1.5"` ... `"GWL 3.0"` and output names `{gwlX.Y}_{percentile}.epw`;
   `models.ch2025.CH2025_BBOX`
-- `tools.io.write_period_of_record(path, start, end)` (since 3.2.0; the app's
-  `wfb_task` stamps weather-file-builder output with it)
+- `tools.io.write_period_of_record(path, start, end)` (since 3.2.0; public API,
+  though the app no longer calls it: weather-file-builder 2.1 writes the period itself)
 - `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app; 3.1.0 added `Radiation`)
 - `tools.workflow.compile_climate_model_data(model_sources, pathway, variable,
   longitude, latitude, percentiles, time_slices=None)`
@@ -109,6 +110,19 @@ CHANGELOG, and update the app in the same piece of work.
 - Pathway names ("Best Case Scenario", "Middle of the Road", "Upper Middle
   Scenario", "Worst Case Scenario"), output file naming, and the env vars
   `PYEPWMORPH_CACHE_DIR` / `PYEPWMORPH_CACHE_MAX_MB`
+
+## Downstream contract (weather-file-builder)
+
+weather-file-builder (`pyepwmorph>=3.2.0`) builds EPWs with these; changing
+them breaks it:
+
+- `tools.io.EPW_COLUMN_NAMES`, `tools.io.Epw` (built without a file: `headers`,
+  `dataframe`, `location`, `write_to_file`), `tools.utilities.ts_8760`
+- `tools.psychrometrics.dew_point_from_db_rh(db_C, rh_pct)`,
+  `saturated_vapor_pressure(t_kelvin)`
+- `Period of Record=YYYY-YYYY` in COMMENTS 1 as read by
+  `tools.io.epw_baseline_range` (its tests also use `read_epw_string`,
+  `read_epw_dataframe`)
 
 ## Releases
 

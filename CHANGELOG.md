@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.4.0
+
+The actual meteorological year (AMY) builder moves to weather-file-builder,
+which now builds every weather file from measured or reanalysis records
+(typical, extreme and actual years). pyepwmorph keeps morphing and EPW I/O.
+Morphing is unchanged.
+
+### Deprecated
+
+- `tools.amy` and `tools.amy_meteoswiss` warn on import
+  (`DeprecationWarning`) and will be removed in 4.0. Use
+  `weather_file_builder.amy` and `weather_file_builder.amy_meteoswiss`
+  (weather-file-builder 2.1). The copies here are frozen; fixes go to
+  weather-file-builder only. These are already fixed there:
+  - pressure gaps are filled hour by hour (before, any missing hour put the
+    whole year on the standard atmosphere);
+  - a year with RH but no dew point builds;
+  - night sky cover is no longer missing in a year whose longwave record
+    starts part-way.
+
+  The same applies to `scripts/build_amy_diffuse_table.py` and
+  `pyepwmorph/data/amy_diffuse_table.parquet` (both removed in 4.0).
+
 ## 3.3.0
 
 Adds an actual meteorological year (AMY) builder: one real calendar year of

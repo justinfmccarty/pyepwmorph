@@ -1,5 +1,8 @@
 """MeteoSwiss open data (ogd-smn) adapter for :mod:`pyepwmorph.tools.amy`.
 
+.. deprecated:: 3.4.0
+   Moved to ``weather_file_builder.amy_meteoswiss``. Removed in pyepwmorph 4.0.
+
 Reads the automatic station files that MeteoSwiss publishes at
 https://opendatadocs.meteoswiss.ch/ (10-minute ``..._t_...`` and hourly
 ``..._h_...`` CSVs, semicolon separated) and renames their parameter codes to
@@ -15,9 +18,18 @@ attribution wording).
 """
 
 import logging
+import warnings as _warnings
 from typing import Optional
 
 import pandas as pd
+
+_warnings.warn(
+    "pyepwmorph.tools.amy_meteoswiss is deprecated and will be removed in pyepwmorph 4.0. "
+    "It has moved to weather-file-builder (pip install 'weather-file-builder>=2.1'): "
+    "use weather_file_builder.amy_meteoswiss.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
 

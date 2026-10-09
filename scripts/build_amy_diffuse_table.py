@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Fit the shipped diffuse-fraction tables used by ``pyepwmorph.tools.amy``.
 
+Deprecated with ``pyepwmorph.tools.amy`` (3.4.0): the maintained copy is
+``scripts/build_amy_diffuse_table.py`` in weather-file-builder. Removed in 4.0.
+
 Fluntern-type stations measure global irradiance and sunshine duration but
 not diffuse irradiance. Stations that do measure diffuse (MeteoSwiss
 Zuerich/Affoltern REH and Zuerich/Kloten KLO, 10-minute data) are used to
