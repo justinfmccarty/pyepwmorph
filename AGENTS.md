@@ -58,6 +58,15 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
   morphed EPW stays internally consistent (`MorphConfig.resolved_variables`).
 - EPWs have no 29 February. Solar and daily calculations use a non-leap
   year (`procedures._year_of`), whatever year the first data row carries.
+- Radiation: diffuse and direct normal keep the EPW's own split
+  (`morph_radiation_split`): only the Ridley model's *change* in diffuse
+  fraction is applied, and direct normal scales the file's own value.
+  Never re-split from scratch in the morph (that moved both ~5% with no
+  climate signal). Empty `exthorrad_Whm2`/`extdirrad_Whm2` columns are
+  computed (`extraterrestrial_or_computed`) and written to the output; filled
+  ones are used as they are.
+- Radiation solar geometry is taken mid-hour (`HOUR_MIDPOINT_MINUTES`); the
+  dataframe index marks each hour's start and is never shifted.
 - Solar geometry uses the fixed UTC offset from the EPW LOCATION line, never a
   named timezone (no daylight saving in weather data).
 - Tests never touch the network. Mock or use synthetic data.

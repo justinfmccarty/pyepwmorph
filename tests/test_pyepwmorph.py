@@ -795,6 +795,127 @@ class TestRadiationBounds:
         assert dirnor.sum() / df['dirnorrad_Whm2'].sum() == pytest.approx(1.0, abs=0.15)
 
 
+class TestRadiationSplit:
+    """Diffuse and direct normal keep the EPW's split and follow the change in global (3.5.0)."""
+
+    @pytest.fixture
+    def site(self, epw_path):
+        from pyepwmorph.tools import io as morph_io
+        epw = morph_io.Epw(epw_path)
+        loc = epw.location
+        return epw.dataframe, loc['longitude'], loc['latitude'], loc['utc_offset']
+
+    def _split(self, df, lon, lat, utc, factor, exthor=None, extdirnor=None):
+        from pyepwmorph.morph import procedures
+        exthor = df['exthorrad_Whm2'] if exthor is None else exthor
+        extdirnor = df['extdirrad_Whm2'] if extdirnor is None else extdirnor
+        exthor, extdirnor = procedures.extraterrestrial_or_computed(
+            exthor, extdirnor, lon, lat, utc, index=df.index,
+        )
+        glohor = df['glohorrad_Whm2'] * factor
+        difhor, dirnor = procedures.morph_radiation_split(
+            df['glohorrad_Whm2'], df['difhorrad_Whm2'], df['dirnorrad_Whm2'], glohor,
+            exthor, extdirnor, lon, lat, utc,
+        )
+        return glohor, difhor, dirnor
+
+    def test_unchanged_global_leaves_the_split_unchanged(self, site):
+        df, lon, lat, utc = site
+        _, difhor, dirnor = self._split(df, lon, lat, utc, 1.0)
+        assert np.allclose(difhor.to_numpy(), df['difhorrad_Whm2'].to_numpy(), atol=0.01)
+        assert np.allclose(dirnor.to_numpy(), df['dirnorrad_Whm2'].to_numpy(), atol=0.01)
+
+    def test_brighter_sky_raises_direct_more_than_global(self, site):
+        df, lon, lat, utc = site
+        glohor, difhor, dirnor = self._split(df, lon, lat, utc, 1.05)
+        assert dirnor.sum() / df['dirnorrad_Whm2'].sum() > 1.05
+        assert difhor.sum() / glohor.sum() < df['difhorrad_Whm2'].sum() / df['glohorrad_Whm2'].sum()
+
+    def test_darker_sky_lowers_direct_more_than_global(self, site):
+        df, lon, lat, utc = site
+        _, _, dirnor = self._split(df, lon, lat, utc, 0.95)
+        assert dirnor.sum() / df['dirnorrad_Whm2'].sum() < 0.95
+
+    def test_morphed_components_stay_physical(self, site):
+        df, lon, lat, utc = site
+        for factor in (0.8, 1.2):
+            glohor, difhor, dirnor = self._split(df, lon, lat, utc, factor)
+            assert difhor.min() >= 0
+            assert (difhor.to_numpy() <= glohor.to_numpy() + 0.01).all()
+            assert dirnor.min() >= 0
+            ceiling = np.maximum(df['extdirrad_Whm2'].to_numpy(), df['dirnorrad_Whm2'].to_numpy())
+            assert (dirnor.to_numpy() <= ceiling + 0.01).all()
+
+    def test_empty_extraterrestrial_columns_are_computed(self, site, caplog):
+        """weather-file-builder <= 2.3.0 wrote both columns as 0: the morph then
+        gave diffuse only and no direct normal in any hour."""
+        df, lon, lat, utc = site
+        zeros = pd.Series(0.0, index=df.index)
+        with caplog.at_level("WARNING", logger="pyepwmorph.morph.procedures"):
+            glohor, difhor, dirnor = self._split(df, lon, lat, utc, 1.05, exthor=zeros, extdirnor=zeros)
+        assert "exthorrad_Whm2 is empty" in caplog.text
+        _, difhor_ref, dirnor_ref = self._split(df, lon, lat, utc, 1.05)
+        assert dirnor.sum() > 0.9 * dirnor_ref.sum()
+        assert difhor.sum() == pytest.approx(difhor_ref.sum(), rel=0.05)
+
+    def test_filled_extraterrestrial_columns_are_kept(self, site):
+        from pyepwmorph.morph import procedures
+        df, lon, lat, utc = site
+        exthor, extdirnor = procedures.extraterrestrial_or_computed(
+            df['exthorrad_Whm2'], df['extdirrad_Whm2'], lon, lat, utc, index=df.index,
+        )
+        assert np.array_equal(exthor.to_numpy(), df['exthorrad_Whm2'].to_numpy(dtype=float))
+        assert np.array_equal(extdirnor.to_numpy(), df['extdirrad_Whm2'].to_numpy(dtype=float))
+
+    def test_computed_extraterrestrial_matches_the_file(self, site):
+        """The fallback reproduces a well-formed EPW's own columns."""
+        from pyepwmorph.tools import solar
+        df, lon, lat, utc = site
+        exthor, _ = solar.extraterrestrial_radiation(lon, lat, utc, year=2023)
+        assert exthor.sum() == pytest.approx(df['exthorrad_Whm2'].sum(), rel=0.02)
+
+    def test_workflow_morph_of_a_file_without_extraterrestrial(self, tmp_path, epw_path, identity_climate_data):
+        from pyepwmorph.tools.io import Epw
+        from pyepwmorph.tools.workflow import morphing_workflow
+        epw = Epw(epw_path)
+        epw.dataframe['exthorrad_Whm2'] = 0
+        epw.dataframe['extdirrad_Whm2'] = 0
+        path = str(tmp_path / "no_etr.epw")
+        epw.write_to_file(path)
+        result = morphing_workflow(
+            project_name="no-etr", epw_file=path, user_variables=["Radiation"],
+            user_pathways=["target"], percentiles=[50], target_years=[2050],
+            data_source="custom", custom_data=identity_climate_data,
+            reference_scenario="reference", baseline_range=TEST_BASELINE_RANGE, write_file=False,
+        )
+        morphed_epw = result["2050"]["target"]["50"]
+        morphed = morphed_epw.dataframe
+        assert np.allclose(morphed['dirnorrad_Whm2'], epw.dataframe['dirnorrad_Whm2'], atol=0.01)
+        assert morphed['dirnorrad_Whm2'].sum() > 0
+        # the computed columns are written to the output and named in the comment
+        original = Epw(epw_path).dataframe
+        for column in ('exthorrad_Whm2', 'extdirrad_Whm2'):
+            assert morphed[column].sum() == pytest.approx(original[column].sum(), rel=0.02)
+        assert "were empty: computed from the solar position" in morphed_epw.headers['COMMENTS 2'][0]
+
+    def test_filled_extraterrestrial_columns_pass_through_the_morph(self, epw_path, identity_morph):
+        morphed, original = identity_morph
+        for column in ('exthorrad_Whm2', 'extdirrad_Whm2'):
+            assert np.array_equal(morphed.dataframe[column].to_numpy(), original.dataframe[column].to_numpy())
+        assert "were empty" not in morphed.headers['COMMENTS 2'][0]
+
+
+def test_solar_geometry_offset_keeps_the_hourly_index():
+    """Taking the sun's position mid-hour must not move the index the EPW is written from."""
+    from pyepwmorph.tools import solar
+    start = solar.solar_geometry(8.5, 47.4, 1, year=2023)
+    middle = solar.solar_geometry(8.5, 47.4, 1, year=2023, offset_minutes=solar.HOUR_MIDPOINT_MINUTES)
+    assert middle.index.equals(start.index)
+    noon_row = middle.index.get_loc(pd.Timestamp("2023-06-21 12:00", tz=middle.index.tz))
+    # 12:30 is nearer 8.5 E solar noon (about 12:28) than 12:00
+    assert middle['elevation'].iloc[noon_row] > start['elevation'].iloc[noon_row]
+
+
 # ---------------------------------------------------------------------------
 # Variable dependency ordering
 # ---------------------------------------------------------------------------
@@ -946,7 +1067,8 @@ def test_radiation_identity_leaves_shortwave_and_sky_cover(epw_path, identity_cl
     )
     morphed = result["2050"]["target"]["50"]
     original = Epw(epw_path)
-    for column in ("glohorrad_Whm2", "totskycvr_tenths", "opaqskycvr_tenths"):
+    for column in ("glohorrad_Whm2", "difhorrad_Whm2", "dirnorrad_Whm2",
+                   "totskycvr_tenths", "opaqskycvr_tenths"):
         assert np.allclose(
             morphed.dataframe[column].to_numpy(dtype=float),
             original.dataframe[column].to_numpy(dtype=float),
@@ -957,13 +1079,14 @@ def test_radiation_identity_leaves_shortwave_and_sky_cover(epw_path, identity_cl
 
 class TestIdentityMorph:
     """With no climate signal the morph must be a no-op for every shifted or
-    stretched variable.  Dew point and the two derived irradiance components
-    are recalculated from scratch rather than shifted, so they are only
-    required to stay close to the original."""
+    stretched variable, and for diffuse and direct normal, which keep the
+    EPW's own split (3.5.0).  Dew point is recalculated from scratch, so it
+    is only required to stay close to the original."""
 
     @pytest.mark.parametrize("column", [
         "drybulb_C", "atmos_Pa", "relhum_percent", "windspd_ms",
-        "glohorrad_Whm2", "totskycvr_tenths", "opaqskycvr_tenths",
+        "glohorrad_Whm2", "difhorrad_Whm2", "dirnorrad_Whm2",
+        "totskycvr_tenths", "opaqskycvr_tenths",
     ])
     def test_column_is_unchanged(self, identity_morph, column):
         morphed, original = identity_morph
@@ -977,12 +1100,6 @@ class TestIdentityMorph:
         morphed, original = identity_morph
         difference = (morphed.dataframe['dewpoint_C'] - original.dataframe['dewpoint_C']).abs()
         assert difference.mean() < 0.5
-
-    def test_derived_irradiance_stays_close(self, identity_morph):
-        morphed, original = identity_morph
-        for column in ("difhorrad_Whm2", "dirnorrad_Whm2"):
-            ratio = morphed.dataframe[column].sum() / original.dataframe[column].sum()
-            assert ratio == pytest.approx(1.0, abs=0.15)
 
     def test_all_dependencies_are_recorded_in_the_comment(self, identity_morph):
         morphed, _ = identity_morph

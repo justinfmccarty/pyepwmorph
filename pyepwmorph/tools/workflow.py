@@ -284,6 +284,24 @@ def morph_epw(
             baseline_range, target_range, baseline, future, var,
         )
 
+    # extraterrestrial columns the EPW left empty, computed for the radiation
+    # morph and written to the output so it is complete for later tools
+    filled = {}
+
+    def _split_radiation(glohor, longitude, latitude, utc_offset):
+        """Diffuse and direct normal for morphed global radiation, keeping the EPW's split."""
+        exthor, extdirnor = procedures.extraterrestrial_or_computed(
+            present.get('exthorrad_Whm2'), present.get('extdirrad_Whm2'),
+            longitude, latitude, utc_offset, index=present.index,
+        )
+        for column, values in (('exthorrad_Whm2', exthor), ('extdirrad_Whm2', extdirnor)):
+            if procedures.column_is_empty(present.get(column)):
+                filled[column] = values.round(0).astype(int)
+        return procedures.morph_radiation_split(
+            present['glohorrad_Whm2'], present['difhorrad_Whm2'], present['dirnorrad_Whm2'], glohor,
+            exthor, extdirnor, longitude, latitude, utc_offset,
+        )
+
     morphed = {}
     for variable in morph_config.resolve_variable_order(user_variables, data_source):
         if variable == 'Pressure':
@@ -346,13 +364,7 @@ def morph_epw(
             glohor = procedures.morph_glohor(
                 present['glohorrad_Whm2'], rsds_future, rsds_base,
             )
-            difhor = procedures.calc_difhor(
-                longitude, latitude, utc_offset, glohor, present['exthorrad_Whm2'],
-            )
-            dirnor = procedures.calc_dirnor(
-                glohor, difhor, longitude, latitude, utc_offset,
-                extraterrestrial_dirnor=present['extdirrad_Whm2'],
-            )
+            difhor, dirnor = _split_radiation(glohor, longitude, latitude, utc_offset)
             morphed['glohorrad_Whm2'] = glohor
             morphed['difhorrad_Whm2'] = difhor
             morphed['dirnorrad_Whm2'] = dirnor
@@ -367,13 +379,7 @@ def morph_epw(
             glohor = procedures.morph_glohor(
                 present['glohorrad_Whm2'], rsds_future, rsds_base,
             )
-            difhor = procedures.calc_difhor(
-                longitude, latitude, utc_offset, glohor, present['exthorrad_Whm2'],
-            )
-            dirnor = procedures.calc_dirnor(
-                glohor, difhor, longitude, latitude, utc_offset,
-                extraterrestrial_dirnor=present['extdirrad_Whm2'],
-            )
+            difhor, dirnor = _split_radiation(glohor, longitude, latitude, utc_offset)
             totskycvr = procedures.calc_tsc(
                 present['totskycvr_tenths'], clt_future, clt_base,
             )
@@ -390,11 +396,15 @@ def morph_epw(
     if morphed:
         for column, values in morphed.items():
             epw_object.dataframe[column] = values
+        for column, values in filled.items():
+            epw_object.dataframe[column] = values.to_numpy()
         # EPW headers are comma delimited, so the comment itself must not
         # contain commas or it will be split across fields on the next read
         sky_note = ""
         if "Radiation" in morph_config.resolve_variable_order(user_variables, data_source):
             sky_note = " [sky cover left unmorphed]"
+        if filled:
+            sky_note += f" [{' '.join(filled)} were empty: computed from the solar position]"
         if data_source == "ch2025":
             station_note = f" station {station_label}" if station_label else ""
             comment = (

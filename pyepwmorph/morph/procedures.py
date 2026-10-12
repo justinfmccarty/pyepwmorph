@@ -8,6 +8,7 @@ Container for all of the individual morphing calculations which can be traced ba
 
 """
 import calendar
+import logging
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,8 @@ import pandas as pd
 from pyepwmorph.tools import psychrometrics as psych
 from pyepwmorph.tools import solar as morph_solar_utils
 from pyepwmorph.tools import utilities as morph_utils
+
+logger = logging.getLogger(__name__)
 
 #: Solar altitude (degrees) below which direct normal irradiance is set to zero.
 #: Dividing the horizontal beam component by sin(altitude) is numerically
@@ -437,12 +440,104 @@ def morph_glohor(present_glohor, future_glohor, baseline_glohor):
     return _as_series(np.clip(morphed_glohor, 0, None), index, "glohorrad_Whm2")
 
 
+def _radiation_geometry(longitude, latitude, utc_offset, index):
+    """Solar geometry at the middle of each hour-ending EPW row."""
+    return morph_solar_utils.solar_geometry(
+        longitude, latitude, utc_offset, year=_year_of(index),
+        offset_minutes=morph_solar_utils.HOUR_MIDPOINT_MINUTES,
+    )
+
+
+def column_is_empty(column):
+    """True when an EPW column is missing or holds no positive value."""
+    if column is None:
+        return True
+    values = np.asarray(column, dtype=float)
+    return values.size == 0 or not np.any(np.nan_to_num(values, nan=0.0) > 0)
+
+
+def extraterrestrial_or_computed(present_exthor, present_extdirnor, longitude, latitude, utc_offset, index=None):
+    """
+    Return the EPW's extraterrestrial horizontal and direct normal columns, or compute them if empty
+
+    Some EPW writers leave both columns at 0 (weather-file-builder before 2.3.1).
+    The radiation morph needs them for the clearness index and as the ceiling on
+    direct normal; with zeros it returned diffuse only and no direct normal.
+    A column is replaced only when it holds no positive value at all.
+
+    Parameters
+    ----------
+    present_exthor, present_extdirnor : pd.Series or None
+        the EPW's ``exthorrad_Whm2`` and ``extdirrad_Whm2`` columns
+    longitude, latitude, utc_offset : float
+        site location and the fixed UTC offset of the EPW
+    index : pd.DatetimeIndex or None
+        the EPW's index, used for the year and to label the result
+
+    Returns
+    -------
+    tuple of pd.Series
+        (exthor, extdirnor)
+    """
+    index = index if index is not None else _index_of(present_exthor, present_extdirnor)
+    if index is None:
+        index = morph_utils.ts_8760()
+    if not (column_is_empty(present_exthor) or column_is_empty(present_extdirnor)):
+        return (pd.Series(np.asarray(present_exthor, dtype=float), index=index),
+                pd.Series(np.asarray(present_extdirnor, dtype=float), index=index))
+    exthor, extdirnor = morph_solar_utils.extraterrestrial_radiation(
+        longitude, latitude, utc_offset, year=_year_of(index),
+    )
+    computed = []
+    for name, column, values in (("exthorrad_Whm2", present_exthor, exthor),
+                                 ("extdirrad_Whm2", present_extdirnor, extdirnor)):
+        if column_is_empty(column):
+            logger.warning(
+                "EPW column %s is empty; computed it from the solar position for the radiation morph", name,
+            )
+            computed.append(pd.Series(values, index=index))
+        else:
+            computed.append(pd.Series(np.asarray(column, dtype=float), index=index))
+    return computed[0], computed[1]
+
+
+def _ridley_diffuse_fraction(longitude, latitude, utc_offset, glohor, exthor, index):
+    """Diffuse fraction of global horizontal radiation from the Ridley et al. (2010) BRL model."""
+    solar_df = _radiation_geometry(longitude, latitude, utc_offset, index)
+    solar_alt = solar_df['elevation'].to_numpy(dtype=float)
+
+    glohor = np.asarray(glohor, dtype=float)
+    hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(
+        glohor, exthor, index=solar_df.index,
+    )
+    daily = morph_utils.day_factors(solar_df.index, list(daily_clearness.values()))
+    persistence = morph_solar_utils.persistence(
+        hourly_clearness,
+        morph_solar_utils.build_sunrise_sunset(longitude, latitude, utc_offset, year=_year_of(index)),
+    )
+
+    exponent = (
+        -5.38
+        + 6.63 * hourly_clearness
+        + 0.006 * solar_df['local_solar_time'].to_numpy(dtype=float)
+        - 0.007 * solar_alt
+        + 1.75 * daily
+        + 1.31 * persistence
+    )
+    # the logistic gives the diffuse fraction, which cannot leave [0, 1]
+    return np.clip(1.0 / (1.0 + np.exp(exponent)), 0.0, 1.0)
+
+
 def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor):
     """
-    Diffuse horizontal radiation morph is a recalculation based on the morphed global horiztonal and the
-        persistence method [1] from clearness
+    Diffuse horizontal radiation recalculated from scratch with the Ridley et al. persistence model [1]
+
         [1] B. Ridley, J. Boland, and P. Lauret, ‘Modelling of diffuse solar fraction with multiple predictors’,
                 Renewable Energy, vol. 35, no. 2, pp. 478–483, Feb. 2010, doi: 10.1016/j.renene.2009.07.018.
+
+    The morph itself uses :func:`morph_radiation_split`, which keeps the EPW's own
+    split and applies only the model's change; this function remains for a full
+    re-split. Solar geometry is taken at the middle of each hour.
 
     Parameters
     ----------
@@ -467,30 +562,8 @@ def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor)
         a pandas Series of the same shape as present day input
     """
     index = _index_of(present_exthor, morphed_glohor)
-    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset, year=_year_of(index))
-    solar_alt = solar_df['elevation'].to_numpy(dtype=float)
-
     glohor = np.asarray(morphed_glohor, dtype=float)
-    hourly_clearness, daily_clearness = morph_solar_utils.calc_clearness(
-        glohor, present_exthor, index=solar_df.index,
-    )
-    daily = morph_utils.day_factors(solar_df.index, list(daily_clearness.values()))
-    persistence = morph_solar_utils.persistence(
-        hourly_clearness,
-        morph_solar_utils.build_sunrise_sunset(longitude, latitude, utc_offset, year=_year_of(index)),
-    )
-
-    exponent = (
-        -5.38
-        + 6.63 * hourly_clearness
-        + 0.006 * solar_df['local_solar_time'].to_numpy(dtype=float)
-        - 0.007 * solar_alt
-        + 1.75 * daily
-        + 1.31 * persistence
-    )
-    # the logistic gives the diffuse fraction, which cannot leave [0, 1]
-    diffuse_fraction = np.clip(1.0 / (1.0 + np.exp(exponent)), 0.0, 1.0)
-
+    diffuse_fraction = _ridley_diffuse_fraction(longitude, latitude, utc_offset, glohor, present_exthor, index)
     morphed_difhor = np.nan_to_num(glohor * diffuse_fraction, nan=0.0)
     return _as_series(np.clip(morphed_difhor, 0, glohor), index, "difhorrad_Whm2")
 
@@ -498,12 +571,12 @@ def calc_difhor(longitude, latitude, utc_offset, morphed_glohor, present_exthor)
 def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset,
                 extraterrestrial_dirnor=None, min_solar_altitude=MIN_SOLAR_ALTITUDE):
     """
-    Direct normal radiation morph is a recalculation from the morphed global and diffuse horizontal
+    Direct normal radiation recalculated from the morphed global and diffuse horizontal
 
     The beam component on the horizontal is projected onto the normal with the
-    sine rule.  That projection is unbounded as the sun approaches the horizon,
-    so hours below *min_solar_altitude* are set to zero and the result is capped
-    at the extraterrestrial direct normal irradiance.
+    sine rule at the middle of each hour.  That projection is unbounded as the
+    sun approaches the horizon, so hours below *min_solar_altitude* are set to
+    zero and the result is capped at the extraterrestrial direct normal irradiance.
 
     Parameters
     ----------
@@ -536,7 +609,7 @@ def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset,
         a pandas Series of the same shape as present day input
     """
     index = _index_of(extraterrestrial_dirnor, morphed_glohor, morphed_difhor)
-    solar_df = morph_solar_utils.solar_geometry(longitude, latitude, utc_offset, year=_year_of(index))
+    solar_df = _radiation_geometry(longitude, latitude, utc_offset, index)
     solar_alt = solar_df['elevation'].to_numpy(dtype=float)
 
     glohor = np.asarray(morphed_glohor, dtype=float)
@@ -547,13 +620,102 @@ def calc_dirnor(morphed_glohor, morphed_difhor, longitude, latitude, utc_offset,
     usable = (solar_alt >= min_solar_altitude) & (beam_horizontal > 0)
     dirnor = np.divide(beam_horizontal, sin_alt, out=np.zeros_like(beam_horizontal), where=usable)
 
-    if extraterrestrial_dirnor is None:
-        ceiling = SOLAR_CONSTANT
-    else:
-        ceiling = np.asarray(extraterrestrial_dirnor, dtype=float)
-    dirnor = np.clip(np.nan_to_num(dirnor, nan=0.0, posinf=0.0, neginf=0.0), 0, ceiling)
+    dirnor = np.clip(np.nan_to_num(dirnor, nan=0.0, posinf=0.0, neginf=0.0), 0, _ceiling(extraterrestrial_dirnor))
+    return _as_series(dirnor, index if index is not None else solar_df.index, "dirnorrad_Whm2")
 
-    return _as_series(dirnor, index, "dirnorrad_Whm2")
+
+def _ceiling(extraterrestrial_dirnor):
+    if column_is_empty(extraterrestrial_dirnor):
+        return SOLAR_CONSTANT
+    return np.asarray(extraterrestrial_dirnor, dtype=float)
+
+
+#: Horizontal beam (W/m2) below which an hour's direct normal is changed by
+#: projecting the beam change instead of scaling the EPW's own direct normal.
+MIN_BEAM_FOR_SCALING = 10.0
+
+
+def morph_radiation_split(present_glohor, present_difhor, present_dirnor, morphed_glohor,
+                          present_exthor, present_extdirnor, longitude, latitude, utc_offset,
+                          min_solar_altitude=MIN_SOLAR_ALTITUDE):
+    """
+    Morph diffuse horizontal and direct normal radiation, keeping the EPW's own split
+
+    The diffuse fraction is the EPW's own plus the change the Ridley et al. (2010)
+    model predicts between the present and the morphed global radiation::
+
+        kd_future = clip(kd_present + kd_model(G_future) - kd_model(G_present), 0, 1)
+
+    bounded so the change never carries the fraction past ``kd_model(G_future)``
+    in the direction it moves (where the EPW is already beyond it, the fraction
+    stays where it is).
+    Direct normal scales the EPW's own value by the change in the horizontal beam,
+    so it keeps the file's solar-timing convention. Where the present beam is under
+    ``MIN_BEAM_FOR_SCALING`` the beam change is projected with the sine rule at the
+    middle of the hour instead. The result is capped at the extraterrestrial direct
+    normal. With no change in global radiation both outputs equal the input.
+
+    Re-splitting from scratch (:func:`calc_difhor`) moved diffuse and direct normal
+    by about 5% even without a climate signal, because the EPW was split by a
+    different model (weather-file-builder uses DIRINT); that error went into every
+    future file.
+
+    Parameters
+    ----------
+    present_glohor, present_difhor, present_dirnor : pd.Series
+        the EPW's global horizontal, diffuse horizontal and direct normal radiation
+    morphed_glohor : pd.Series
+        morphed global horizontal radiation
+    present_exthor, present_extdirnor : pd.Series
+        extraterrestrial horizontal and direct normal radiation (see
+        :func:`extraterrestrial_or_computed`)
+    longitude, latitude, utc_offset : float
+        site location and the fixed UTC offset of the EPW
+    min_solar_altitude : float
+        solar altitude in degrees below which a projected beam change is not applied
+
+    Returns
+    -------
+    tuple of pd.Series
+        (difhorrad_Whm2, dirnorrad_Whm2)
+    """
+    index = _index_of(present_glohor, morphed_glohor, present_exthor)
+    g0 = np.asarray(present_glohor, dtype=float)
+    d0 = np.clip(np.asarray(present_difhor, dtype=float), 0, None)
+    b0 = np.clip(np.asarray(present_dirnor, dtype=float), 0, None)
+    g1 = np.asarray(morphed_glohor, dtype=float)
+
+    kd_model_present = _ridley_diffuse_fraction(longitude, latitude, utc_offset, g0, present_exthor, index)
+    kd_model_future = _ridley_diffuse_fraction(longitude, latitude, utc_offset, g1, present_exthor, index)
+    has_present = g0 > 0
+    kd_present = np.divide(d0, g0, out=np.zeros_like(g0), where=has_present)
+    change = kd_model_future - kd_model_present
+    shifted = np.clip(kd_present + change, 0.0, 1.0)
+    # the change may move the fraction towards the model's future value but not past it:
+    # a clear hour stretched brighter otherwise lost most of its diffuse (p5 of clear-hour
+    # diffuse fell from 97 to 49 W/m2 for a +5% global morph at Zurich)
+    shifted = np.where(
+        change < 0,
+        np.maximum(shifted, np.minimum(kd_present, kd_model_future)),
+        np.minimum(shifted, np.maximum(kd_present, kd_model_future)),
+    )
+    kd_future = np.where(has_present, shifted, kd_model_future)
+    d1 = np.clip(np.nan_to_num(g1 * kd_future, nan=0.0), 0, np.clip(g1, 0, None))
+
+    beam0 = g0 - d0
+    beam1 = g1 - d1
+    solar_alt = _radiation_geometry(longitude, latitude, utc_offset, index)['elevation'].to_numpy(dtype=float)
+    sin_alt = np.sin(np.radians(solar_alt))
+
+    scale = beam0 >= MIN_BEAM_FOR_SCALING
+    b1 = np.divide(b0 * beam1, beam0, out=b0.copy(), where=scale)
+    project = ~scale & (solar_alt >= min_solar_altitude)
+    b1 = np.where(project, b0 + np.divide(beam1 - beam0, sin_alt, out=np.zeros_like(g0), where=project), b1)
+    # an hour the EPW already has above the ceiling keeps its own value as the limit
+    ceiling = np.maximum(_ceiling(present_extdirnor), b0)
+    b1 = np.clip(np.nan_to_num(b1, nan=0.0, posinf=0.0, neginf=0.0), 0, ceiling)
+
+    return _as_series(d1, index, "difhorrad_Whm2"), _as_series(b1, index, "dirnorrad_Whm2")
 
 
 def calc_tsc(present_tsc, future_clt, baseline_clt):

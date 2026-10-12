@@ -21,6 +21,11 @@ __status__ = "Production"
 #: Year used to build solar geometry when the caller does not supply one.
 DEFAULT_SOLAR_YEAR = 2023
 
+#: Minutes from the start of an EPW row's hour to its middle. EPW rows are
+#: hour-ending (row ``hour=1`` holds 00:00-01:00) and the dataframe index marks
+#: the start of each hour, so hourly irradiance belongs to index + 30 min.
+HOUR_MIDPOINT_MINUTES = 30
+
 
 def fixed_offset(utc_offset):
     """
@@ -104,7 +109,7 @@ def calc_local_solar_time(local_time, time_correction):
     return local_time + (time_correction / 60)
 
 
-def solar_geometry(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR):
+def solar_geometry(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR, offset_minutes=0):
     """
     creates a pandas Dataframe object contianing (for each hour of the year) various important solar
         position parameters
@@ -119,6 +124,11 @@ def solar_geometry(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR):
         the difference in hours between Coordinated Universal Time (UTC) and local standard time
     year : int
         the year to build the solar geometry for, normally the year of the EPW data
+    offset_minutes : float
+        minutes after each hour's start at which the sun's position is taken.
+        The radiation procedures pass ``HOUR_MIDPOINT_MINUTES`` so hourly
+        irradiance meets the sun at the middle of its hour. The returned
+        index always marks the start of each hour, like the EPW dataframe.
 
     Returns
     -------
@@ -127,10 +137,12 @@ def solar_geometry(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR):
             position parameters
     """
     times = morph_utils.ts_8760(year=year, tz=fixed_offset(utc_offset))
-    solar_df = pvlib.solarposition.get_solarposition(times, latitude, longitude)
+    position_times = times + pd.Timedelta(minutes=offset_minutes)
+    solar_df = pvlib.solarposition.get_solarposition(position_times, latitude, longitude)
+    solar_df.index = times
 
     day_of_year = times.dayofyear.to_numpy()
-    solar_df['hour'] = times.hour
+    solar_df['hour'] = times.hour + offset_minutes / 60.0
     solar_df['doy'] = day_of_year
     solar_df['equation_of_time'] = pvlib.solarposition.equation_of_time_spencer71(day_of_year)
     solar_df['local_time_meridian'] = calc_local_time_meridian(utc_offset)
@@ -141,6 +153,39 @@ def solar_geometry(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR):
         solar_df['hour'], solar_df['time_correction'],
     )
     return solar_df
+
+
+def extraterrestrial_radiation(longitude, latitude, utc_offset, year=DEFAULT_SOLAR_YEAR):
+    """
+    hourly extraterrestrial horizontal and direct normal irradiance in the EPW's columns' form
+
+    Taken at the middle of each hour-ending row, as weather-file-builder writes
+    them. Used when an EPW leaves ``exthorrad_Whm2`` / ``extdirrad_Whm2`` empty.
+
+    Parameters
+    ----------
+    longitude : float
+        longitude (-180 to 180)
+    latitude : float
+        latitude (-90 to 90)
+    utc_offset : float
+        the difference in hours between Coordinated Universal Time (UTC) and local standard time
+    year : int
+        the year to build the series for (a non-leap year)
+
+    Returns
+    -------
+    tuple of np.ndarray
+        (8760,) arrays of extraterrestrial horizontal and direct normal irradiance (W/m2);
+            both are zero while the sun is below the horizon at the middle of the hour
+    """
+    times = morph_utils.ts_8760(year=year, tz=fixed_offset(utc_offset))
+    middle = times + pd.Timedelta(minutes=HOUR_MIDPOINT_MINUTES)
+    zenith = pvlib.solarposition.get_solarposition(middle, latitude, longitude)['zenith'].to_numpy(dtype=float)
+    dni_extra = np.asarray(pvlib.irradiance.get_extra_radiation(middle), dtype=float)
+    exthor = dni_extra * np.maximum(np.cos(np.radians(zenith)), 0.0)
+    # EPW convention: both columns are 0 while the sun is below the horizon
+    return exthor, np.where(exthor > 0, dni_extra, 0.0)
 
 
 def calc_solar_alt(zenith):

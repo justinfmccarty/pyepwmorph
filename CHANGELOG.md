@@ -4,6 +4,50 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.5.0
+
+Radiation morphs change: diffuse horizontal and direct normal now keep the
+EPW's own split, and EPWs without extraterrestrial radiation morph correctly.
+Global horizontal radiation and every other variable are unchanged.
+
+### Fixed
+
+- **No direct normal from EPWs with empty extraterrestrial columns.** The
+  radiation morph read `exthorrad_Whm2` for the clearness index and capped
+  direct normal at `extdirrad_Whm2`. weather-file-builder up to 2.3.0 wrote
+  both as 0 in ERA5 typical and extreme years, so every Radiation or Clouds
+  and Radiation morph of such a file came out diffuse only, with direct
+  normal 0 in every hour. When a column holds no positive value it is now
+  computed from the solar position (new `procedures.extraterrestrial_or_computed`,
+  `solar.extraterrestrial_radiation`) and a warning is logged. The computed
+  columns are also written to the morphed EPW (rounded, 0 at night) and named
+  in COMMENTS 2. Filled columns are used and written as they are. `calc_dirnor` also falls back to the solar constant
+  when its ceiling column is empty.
+
+### Changed
+
+- **Diffuse and direct normal keep the EPW's split** (`procedures.morph_radiation_split`).
+  Before, both were recalculated from scratch with the Ridley et al. (2010)
+  model, which differs from the model the EPW was split with (weather-file-builder
+  uses DIRINT). That moved diffuse and direct normal by about 5% even with no
+  climate signal (an ERA5 TMY at Zurich: diffuse -5%, direct normal +5%), and
+  the error went into every future file. Now the diffuse fraction is the EPW's
+  own plus the change the Ridley model predicts between present and morphed
+  global radiation, bounded so it never passes the model's future value, and
+  direct normal scales the EPW's own value by the change in horizontal beam
+  (beam change projected mid-hour where the present beam is under 10 W/m2).
+  With no climate signal both are now returned unchanged, and the identity
+  tests require it. Zurich ERA5 TMY, CH2025 GWL 3.0 median (global +2.0%):
+  diffuse -1.3%, direct normal +4.3% (3.4.0 with the columns filled: -7.7%
+  and +10.4%).
+- **Radiation solar geometry is taken mid-hour.** EPW rows are hour-ending
+  and the dataframe index marks the start of each hour; the radiation
+  procedures took the sun's position at that start, 30 minutes early. They
+  now use the middle (`solar_geometry(..., offset_minutes=HOUR_MIDPOINT_MINUTES)`).
+  The returned index and the EPW's date and time columns are unchanged.
+- `calc_difhor` and `calc_dirnor` remain for a full re-split but the morph no
+  longer calls them.
+
 ## 3.4.0
 
 The actual meteorological year (AMY) builder moves to weather-file-builder,
