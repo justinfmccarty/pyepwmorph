@@ -107,7 +107,7 @@ results = workflow.morphing_workflow(
 morphed = results["gwl2.0"]["50"]
 ```
 
-The site is matched to the nearest station that has the requested variables (or, with `ch2025_full_coverage=True`, the nearest station that has every CH2025 variable), with an elevation penalty so a much higher station is not chosen just because it is close on the map. Supported variables are temperature, humidity, dew point, wind, and radiation (global, diffuse, and direct). Pressure and cloud cover are not in CH2025; requesting them raises an error. Sky cover is left at the EPW's baseline values when radiation is morphed, so longwave sky temperature in EnergyPlus does not follow the shortwave change.
+The site is matched to the nearest station that has the requested variables (or, with `ch2025_full_coverage=True`, the nearest station that has every CH2025 variable), with an elevation penalty so a much higher station is not chosen just because it is close on the map. Supported variables are temperature, humidity, dew point, wind, and radiation (global, diffuse, and direct). Pressure and cloud cover are not in CH2025; requesting them raises an error. Sky cover is left at the EPW's baseline values when radiation is morphed. Horizontal infrared follows the morphed temperature and humidity (see "Variable dependencies"), but not cloud changes.
 
 The signal is the change from the 1991-2020 reference climate to the chosen warming level. Each model chain's change is computed first, over the chains that reach that warming level, and the percentiles are taken of those changes. The EPW's period is read from the `Period of Record` in its header. If that is not exactly 1991-2020, a `UserWarning` recommends a TMY built from 1991-2020 data. If the header states no period, a second warning says the period could not be detected, and the mismatch warning still fires if the data rows' years fall outside 1991-2020. The signal is applied to the file as it stands either way. `tools.io.write_period_of_record` adds the statement to files built without one. The same caveats are listed in `MorphConfig.ch2025_notes` and the matched station in `MorphConfig.ch2025_station`.
 
@@ -138,7 +138,7 @@ removed in 4.0.
 - **Pressure** -- atmospheric pressure (shift)
 - **Wind** -- wind speed (stretch)
 - **Radiation** -- global/diffuse/direct radiation, without changing sky cover (all sources; the only radiation option for CH2025)
-- **Clouds and Radiation** -- global/diffuse/direct radiation and sky cover (CMIP6 and custom data)
+- **Clouds and Radiation** -- global/diffuse/direct radiation and sky cover (CMIP6 and custom data). Morphed sky cover keeps two decimals (EnergyPlus reads it as a real number), so small monthly changes are not lost to rounding
 - **Dew Point** -- recalculated from morphed temperature and humidity
 
 ### Variable dependencies
@@ -149,6 +149,20 @@ Some variables cannot be morphed on their own:
 - **Dew Point** requires Temperature, Humidity, and Pressure (Temperature and Humidity only with CH2025)
 
 Dependencies are added automatically and are **written to the output file**. Asking for `Dew Point` alone therefore returns an EPW with morphed pressure, temperature, relative humidity, and dew point, which keeps the file internally consistent. `MorphConfig.resolved_variables` shows exactly what will be written, in the order it is computed.
+
+Some fields are recomputed from the morphed ones without climate data of their own (`MorphConfig.recomputed_variables`):
+
+- **Dew point** whenever Temperature or Humidity is morphed. After a temperature-only morph it comes from the morphed dry-bulb and the file's own relative humidity, so relative humidity is held as it was.
+- **Horizontal infrared** whenever Temperature, Humidity, Dew Point or Clouds and Radiation is morphed. The file's own value is scaled by the change in `eps_sky * sigma * T^4` from the Clark and Allen sky model (EnergyPlus's default), computed from dry-bulb, dew point and opaque sky cover. Missing values (9999) stay missing. With CH2025, which has no cloud data, it follows temperature and humidity only.
+
+## Header blocks
+
+A morphed file's header is brought in line with its new climate:
+
+- **GROUND TEMPERATURES** shift with the change in monthly mean dry-bulb. The annual-mean change passes through in full; the seasonal part is damped and lagged at each depth the way the source header's own ground temperatures are against the source air. A file without ground temperatures gets them at 0.5, 2 and 4 m from the morphed air (Kusuda and Achenbach).
+- **DESIGN CONDITIONS** are replaced by `DESIGN CONDITIONS,0`, because the source's ASHRAE values describe the baseline climate. Size equipment from the morphed hours, not from the header.
+
+Both are noted in COMMENTS 2. CMIP6 morphs also name the grid cell each model's data came from and its distance from the site.
 
 ## Caching
 

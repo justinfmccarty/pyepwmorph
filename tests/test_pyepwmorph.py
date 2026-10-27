@@ -725,22 +725,22 @@ class TestMorphingSignalStrength:
         assert isinstance(morphed.index, pd.DatetimeIndex)
         assert morphed.index.equals(df.index)
 
-    def test_cloud_shift_is_rounded_not_truncated(self, flat_climatology):
+    def test_cloud_shift_is_kept_not_rounded_to_whole_tenths(self, flat_climatology):
         from pyepwmorph.morph import procedures
         from pyepwmorph.tools import utilities as morph_utils
         index = morph_utils.ts_8760(year=2021)
         present = pd.Series(np.full(8760, 5), index=index)
-        # a nine percentage point change is 0.9 tenths, which must not vanish
+        # a nine percentage point change is 0.9 tenths (3.6.0: kept, not rounded to 1)
         morphed = procedures.calc_tsc(present, flat_climatology * 9, flat_climatology * 0)
-        assert (morphed == 6).all()
+        assert np.allclose(morphed, 5.9)
 
-    def test_small_cloud_change_rounds_to_no_change(self, flat_climatology):
+    def test_small_cloud_change_is_not_lost(self, flat_climatology):
         from pyepwmorph.morph import procedures
         from pyepwmorph.tools import utilities as morph_utils
         index = morph_utils.ts_8760(year=2021)
         present = pd.Series(np.full(8760, 5), index=index)
         morphed = procedures.calc_tsc(present, flat_climatology * 2, flat_climatology * 0)
-        assert (morphed == 5).all()
+        assert np.allclose(morphed, 5.2)
 
     def test_cloud_cover_stays_within_tenths(self, flat_climatology):
         from pyepwmorph.morph import procedures
@@ -1770,3 +1770,274 @@ class TestCH2025:
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
+
+
+# ---------------------------------------------------------------------------
+# Dew point follows temperature and humidity (3.6.0, issue #5)
+# ---------------------------------------------------------------------------
+
+def _custom_morph(epw_path, climate_data, variables, pathway):
+    from pyepwmorph.tools.workflow import morphing_workflow
+    result = morphing_workflow(
+        project_name="consequents",
+        epw_file=epw_path,
+        user_variables=variables,
+        user_pathways=[pathway],
+        percentiles=[50],
+        target_years=[2050],
+        data_source="custom",
+        custom_data=climate_data,
+        reference_scenario="reference",
+        baseline_range=TEST_BASELINE_RANGE,
+        write_file=False,
+    )
+    return result["2050"][pathway]["50"].dataframe
+
+
+class TestDewPointConsequent:
+
+    def test_consequents_are_not_resolved_dependencies(self):
+        from pyepwmorph.tools import configuration as morph_config
+        resolved = morph_config.resolve_variable_order(['Temperature'])
+        assert resolved == ['Temperature']
+        # resolving the resolved list again changes nothing
+        assert morph_config.resolve_variable_order(resolved) == resolved
+        assert morph_config.consequent_variables(resolved) == ['Dew Point', 'Horizontal Infrared']
+        assert morph_config.morph_order_with_consequents(['Humidity']) == [
+            'Pressure', 'Temperature', 'Humidity', 'Dew Point', 'Horizontal Infrared',
+        ]
+        assert morph_config.consequent_variables(['Wind']) == []
+
+    def test_config_reports_recomputed_variables(self, epw_path, tmp_output):
+        from pyepwmorph.tools import configuration as morph_config
+        config = morph_config.MorphConfig(
+            project_name='recomputed', epw_fp=epw_path, user_variables=['Temperature'],
+            user_pathways=['Best Case Scenario'], percentiles=[50], target_years=[2050],
+            output_directory=tmp_output,
+        )
+        assert config.resolved_variables == ['Temperature']
+        assert config.recomputed_variables == ['Dew Point', 'Horizontal Infrared']
+        # no humidity or pressure data is fetched for the recomputed dew point
+        assert set(config.model_variables) == {'tas', 'tasmax', 'tasmin'}
+
+    @pytest.mark.parametrize("variables", [["Temperature"], ["Humidity"]])
+    def test_dew_point_never_exceeds_dry_bulb(self, epw_path, warmer_climate_data, variables):
+        morphed = _custom_morph(epw_path, warmer_climate_data, variables, "warmer")
+        assert (morphed['dewpoint_C'] <= morphed['drybulb_C'] + 0.05).all()
+
+    def test_temperature_only_keeps_relative_humidity_and_raises_dew_point(
+            self, epw_path, warmer_climate_data):
+        from pyepwmorph.tools.io import Epw
+        original = Epw(epw_path).dataframe
+        morphed = _custom_morph(epw_path, warmer_climate_data, ["Temperature"], "warmer")
+        assert np.allclose(morphed['relhum_percent'], original['relhum_percent'])
+        assert (morphed['dewpoint_C'] - original['dewpoint_C']).mean() > 1.0
+
+    def test_temperature_only_identity_keeps_dew_point(self, epw_path, identity_climate_data):
+        from pyepwmorph.tools.io import Epw
+        original = Epw(epw_path).dataframe
+        morphed = _custom_morph(epw_path, identity_climate_data, ["Temperature"], "target")
+        assert (morphed['dewpoint_C'] - original['dewpoint_C']).abs().mean() < 0.5
+
+    def test_ch2025_humidity_only_recomputes_dew_point(self, tmp_path):
+        from pyepwmorph.tools import io as morph_io
+        from pyepwmorph.tools.workflow import morphing_workflow
+
+        epw_path = _swiss_epw(tmp_path)
+        original = morph_io.Epw(epw_path).dataframe
+        with pytest.warns(UserWarning, match="1991-2020"):
+            result = morphing_workflow(
+                project_name="ch2025-humidity",
+                epw_file=epw_path,
+                user_variables=["Humidity"],
+                user_pathways=["GWL 3.0"],
+                percentiles=[50],
+                data_source="ch2025",
+                write_file=False,
+            )
+        morphed = result["gwl3.0"]["50"].dataframe
+        assert np.allclose(morphed['drybulb_C'], original['drybulb_C'])
+        assert (morphed['dewpoint_C'] <= morphed['drybulb_C'] + 0.05).all()
+        assert not np.allclose(morphed['dewpoint_C'], original['dewpoint_C'])
+
+
+# ---------------------------------------------------------------------------
+# Sky cover keeps the monthly shift (3.6.0, issue #11)
+# ---------------------------------------------------------------------------
+
+class TestSkyCoverShift:
+
+    @staticmethod
+    def _present(seed=0):
+        index = pd.date_range("2015-01-01", periods=8760, freq="h")
+        rng = np.random.default_rng(seed)
+        # whole tenths away from the 0 and 10 limits, so nothing is clamped
+        return pd.Series(rng.integers(2, 9, len(index)).astype(float), index=index)
+
+    @pytest.mark.parametrize("delta_tenths", [-1.4, -0.6, -0.2, 0.2, 0.6, 1.4])
+    def test_monthly_mean_change_matches_the_delta(self, delta_tenths):
+        from pyepwmorph.morph import procedures
+        present = self._present()
+        baseline = pd.Series(np.full(12, 50.0))
+        future = baseline + 10.0 * delta_tenths   # clt in percent
+        morphed = procedures.calc_tsc(present, future, baseline)
+        change = (morphed - present).groupby(present.index.month).mean()
+        assert np.allclose(change, delta_tenths, atol=0.01)
+
+    def test_zero_delta_returns_the_input(self):
+        from pyepwmorph.morph import procedures
+        present = self._present()
+        flat = pd.Series(np.full(12, 50.0))
+        morphed = procedures.calc_tsc(present, flat, flat)
+        assert np.array_equal(morphed.to_numpy(), present.to_numpy())
+        opaque = procedures.calc_osc(morphed, present - 1, present)
+        assert np.allclose(opaque.to_numpy(), (present - 1).to_numpy())
+
+    def test_limits_are_respected(self):
+        from pyepwmorph.morph import procedures
+        index = pd.date_range("2015-01-01", periods=8760, freq="h")
+        present = pd.Series(np.where(np.arange(8760) % 2, 0.0, 10.0), index=index)
+        baseline = pd.Series(np.full(12, 50.0))
+        for future in (baseline + 20.0, baseline - 20.0):
+            morphed = procedures.calc_tsc(present, future, baseline)
+            assert morphed.min() >= 0 and morphed.max() <= 10
+
+    def test_decimal_sky_cover_survives_a_write_and_reread(self, epw_path, tmp_path):
+        from pyepwmorph.morph import procedures
+        from pyepwmorph.tools.io import Epw
+        epw = Epw(epw_path)
+        present = epw.dataframe['totskycvr_tenths']
+        baseline = pd.Series(np.full(12, 50.0))
+        morphed = procedures.calc_tsc(present, baseline - 3.0, baseline)
+        epw.dataframe['totskycvr_tenths'] = morphed
+        out = tmp_path / "sky.epw"
+        epw.write_to_file(str(out))
+        reread = Epw(str(out)).dataframe['totskycvr_tenths'].to_numpy(dtype=float)
+        assert np.allclose(reread, morphed.to_numpy(), atol=0.005)
+        assert not np.allclose(reread, np.rint(reread))
+
+
+# ---------------------------------------------------------------------------
+# Horizontal infrared follows the morph (3.6.0, issue #9, option a)
+# ---------------------------------------------------------------------------
+
+class TestHorizontalInfrared:
+
+    def test_identity_leaves_infrared_unchanged(self, identity_morph):
+        morphed, original = identity_morph
+        assert np.array_equal(
+            morphed.dataframe['horirsky_Whm2'].to_numpy(dtype=float),
+            original.dataframe['horirsky_Whm2'].to_numpy(dtype=float),
+        )
+
+    def test_warming_raises_infrared(self, warmer_morph):
+        morphed, original = warmer_morph
+        ratio = morphed.dataframe['horirsky_Whm2'].mean() / original.dataframe['horirsky_Whm2'].mean()
+        # +2 K, more moisture and more cloud: a few percent more longwave
+        assert 1.02 < ratio < 1.12
+        assert 'horirsky_Whm2' in morphed.headers['COMMENTS 2'][0]
+
+    def test_modelled_ir_matches_energyplus_clark_allen(self):
+        from pyepwmorph.morph import procedures
+        # 20 C, dew point 10 C, clear sky: eps = 0.787 + 0.764 ln(283.15/273.15)
+        eps = 0.787 + 0.764 * np.log(283.15 / 273.15)
+        expected = eps * 5.670374419e-8 * 293.15 ** 4
+        assert procedures.modelled_horizontal_ir(20.0, 10.0, 0.0) == pytest.approx(expected)
+        # overcast (10 tenths) cloud factor 1 + 0.224 - 0.35 + 0.28
+        assert procedures.sky_emissivity_clark_allen(20.0, 10.0, 10.0) == pytest.approx(eps * 1.154)
+
+    def test_missing_infrared_and_sky_cover_are_handled(self):
+        from pyepwmorph.morph import procedures
+        index = pd.date_range("2015-01-01", periods=4, freq="h")
+        ir = pd.Series([9999.0, 0.0, 300.0, 300.0], index=index)
+        db = np.array([10.0, 10.0, 10.0, 10.0])
+        dp = np.array([5.0, 5.0, 5.0, 5.0])
+        osc = np.array([5.0, 5.0, 99.0, 5.0])
+        result = procedures.morph_horizontal_ir(ir, db, dp, osc, db + 2, dp + 2, np.array([5.0, 5.0, 7.0, 7.0]))
+        assert result.iloc[0] == 9999.0
+        assert result.iloc[1] == 0.0
+        # missing cover: only the temperature and humidity change acts
+        expected = 300.0 * (procedures.modelled_horizontal_ir(12.0, 7.0, 0.0)
+                            / procedures.modelled_horizontal_ir(10.0, 5.0, 0.0))
+        assert result.iloc[2] == pytest.approx(round(expected))
+        assert result.iloc[3] > result.iloc[2]
+
+    def test_wind_only_leaves_infrared(self, epw_path, warmer_climate_data):
+        from pyepwmorph.tools.io import Epw
+        original = Epw(epw_path).dataframe
+        morphed = _custom_morph(epw_path, warmer_climate_data, ["Wind"], "warmer")
+        assert np.array_equal(morphed['horirsky_Whm2'].to_numpy(dtype=float),
+                              original['horirsky_Whm2'].to_numpy(dtype=float))
+
+
+# ---------------------------------------------------------------------------
+# Header blocks follow the morph (3.6.0, issue #10)
+# ---------------------------------------------------------------------------
+
+class TestClimateHeaders:
+
+    def test_identity_keeps_ground_temperatures(self, identity_morph):
+        morphed, original = identity_morph
+        assert morphed.headers['GROUND TEMPERATURES'] == original.headers['GROUND TEMPERATURES']
+
+    def test_any_morph_removes_design_conditions(self, identity_morph, tmp_path):
+        from pyepwmorph.tools.io import Epw
+        morphed, original = identity_morph
+        assert original.headers['DESIGN CONDITIONS'][0] == '1'
+        assert morphed.headers['DESIGN CONDITIONS'] == ['0']
+        assert "design conditions removed" in morphed.headers['COMMENTS 2'][0]
+        out = tmp_path / "design.epw"
+        morphed.write_to_file(str(out))
+        assert out.read_text().splitlines()[1] == "DESIGN CONDITIONS,0"
+        assert len(Epw(str(out)).dataframe) == 8760
+
+    def test_warming_shifts_every_depth_by_the_mean_change(self, warmer_morph):
+        from pyepwmorph.morph import headers
+        morphed, original = warmer_morph
+        before = headers.parse_ground_temperatures(original.headers['GROUND TEMPERATURES'])
+        after = headers.parse_ground_temperatures(morphed.headers['GROUND TEMPERATURES'])
+        assert [r["depth"] for r in after] == [r["depth"] for r in before]
+        for old, new in zip(before, after):
+            # a flat +2 K climate signal: every month and depth warms by ~2 K
+            assert np.allclose(new["values"] - old["values"], 2.0, atol=0.3)
+        assert "ground temperatures shifted" in morphed.headers['COMMENTS 2'][0]
+
+    def test_seasonal_change_is_damped_and_lagged_with_depth(self):
+        from pyepwmorph.morph import headers
+        m = np.arange(12)
+        w = 2 * np.pi / 12
+        air = 10 + 10 * np.cos(w * m - 6 * w)
+        # a deeper layer: half the swing, one month later
+        ground = 10 + 5 * np.cos(w * m - 7 * w)
+        # summer-only warming: +2 K amplitude in phase with the air
+        morphed_air = air + 2 * np.cos(w * m - 6 * w)
+        change = headers.ground_change(air, morphed_air, ground)
+        assert np.allclose(change, 1 * np.cos(w * m - 7 * w), atol=1e-9)
+
+    def test_tropical_site_gets_the_mean_change_only(self):
+        from pyepwmorph.morph import headers
+        air = np.full(12, 27.0)
+        change = headers.ground_change(air, air + 1.5, np.full(12, 27.5))
+        assert np.allclose(change, 1.5)
+
+    def test_missing_ground_temperatures_are_computed(self):
+        from pyepwmorph.morph import headers
+        months = np.repeat(np.arange(1, 13), 730)[:8760]
+        present = 10 + 10 * np.cos(2 * np.pi * (months - 7) / 12)
+        fields, how = headers.morphed_ground_temperatures(['0'], present, present + 2, months)
+        assert how == "computed"
+        records = headers.parse_ground_temperatures(fields)
+        assert [r["depth"] for r in records] == ["0.5", "2", "4"]
+        swings = [np.ptp(r["values"]) for r in records]
+        assert swings[0] > swings[1] > swings[2]
+        assert all(abs(r["values"].mean() - 12.0) < 0.01 for r in records)
+
+    def test_missing_block_is_inserted_in_order(self, epw_path, warmer_climate_data):
+        from pyepwmorph.tools import workflow
+        from pyepwmorph.tools.io import Epw
+        epw = Epw(epw_path)
+        del epw.headers['GROUND TEMPERATURES']
+        present = epw.dataframe
+        workflow._update_climate_headers(epw, present, {'drybulb_C': present['drybulb_C'] + 1.0})
+        keys = list(epw.headers)
+        assert keys.index('TYPICAL/EXTREME PERIODS') < keys.index('GROUND TEMPERATURES') < keys.index('HOLIDAYS/DAYLIGHT SAVINGS')

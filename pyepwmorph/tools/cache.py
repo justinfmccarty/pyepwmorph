@@ -29,7 +29,9 @@ __status__ = "Production"
 
 #: Bumped whenever the shape of the cached payload changes, so that stale
 #: entries written by an older release are never read back.
-CACHE_SCHEMA_VERSION = 2
+#: 3 (pyepwmorph 3.6.0): entries from 2 may hold the wrong grid cell for
+#: western-hemisphere sites on 0..360 grids.
+CACHE_SCHEMA_VERSION = 3
 
 #: Environment variable overrides, useful on shared machines and in CI.
 CACHE_DIR_ENV_VAR = "PYEPWMORPH_CACHE_DIR"

@@ -60,13 +60,30 @@ CH2025_VARIABLE_DEPENDENCIES = {
     'Dew Point': ['Temperature', 'Humidity'],
 }
 
+#: Variables that must be recomputed after these are morphed, so the output
+#: stays psychrometrically consistent (3.6.0). Unlike dependencies they are
+#: not expanded further: recomputing dew point after a temperature-only morph
+#: uses the morphed dry-bulb and the file's own relative humidity, and needs
+#: no humidity or pressure data. Horizontal infrared follows dry-bulb, dew
+#: point and opaque sky cover (``procedures.morph_horizontal_ir``, issue #9). Adding Dew Point to VARIABLE_DEPENDENCIES
+#: instead would create a cycle (Dew Point depends on Humidity). Applies to
+#: every data source. Added by ``morph_order_with_consequents``, never by
+#: ``resolve_variable_order``.
+VARIABLE_CONSEQUENTS = {
+    'Temperature': ['Dew Point', 'Horizontal Infrared'],
+    'Humidity': ['Dew Point', 'Horizontal Infrared'],
+    'Dew Point': ['Horizontal Infrared'],
+    'Clouds and Radiation': ['Horizontal Infrared'],
+}
+
 #: The order variables must be morphed in so that every variable sees its
 #: dependencies already morphed.  Pressure and temperature feed humidity,
 #: which in turn feeds dew point.  ``Radiation`` morphs the solar fields
-#: without touching sky cover.
+#: without touching sky cover.  ``Horizontal Infrared`` comes last: it needs
+#: the morphed dry-bulb, dew point and opaque sky cover.
 MORPH_ORDER = [
     'Pressure', 'Temperature', 'Humidity', 'Dew Point', 'Wind',
-    'Radiation', 'Clouds and Radiation',
+    'Radiation', 'Clouds and Radiation', 'Horizontal Infrared',
 ]
 
 
@@ -122,7 +139,9 @@ def resolve_variable_order(user_variables, data_source="cmip6"):
     Dependencies are pulled in transitively, so asking for ``Dew Point``
     alone yields pressure, temperature, humidity, and dew point.  Every
     resolved variable is written to the morphed EPW, which keeps the output
-    file internally consistent.
+    file internally consistent.  Consequents (``VARIABLE_CONSEQUENTS``) are
+    not part of this list, so resolving a resolved list again changes
+    nothing; see ``morph_order_with_consequents``.
 
     For ``data_source="ch2025"`` humidity is a direct relative-humidity
     stretch, so it has no dependencies, and dew point needs only temperature
@@ -159,6 +178,32 @@ def resolve_variable_order(user_variables, data_source="cmip6"):
         logger.warning("Ignoring unsupported morphing variable(s): %s", ", ".join(sorted(unsupported)))
 
     return [variable for variable in MORPH_ORDER if variable in resolved]
+
+
+def consequent_variables(resolved_variables):
+    """Variables recomputed because others are morphed (not already in the list)."""
+    present = set(resolved_variables)
+    extra = set()
+    pending = list(resolved_variables)
+    while pending:
+        for consequent in VARIABLE_CONSEQUENTS.get(pending.pop(), []):
+            if consequent not in extra:
+                extra.add(consequent)
+                pending.append(consequent)
+    return [variable for variable in MORPH_ORDER if variable in extra - present]
+
+
+def morph_order_with_consequents(user_variables, data_source="cmip6"):
+    """The full morphing order: resolved variables plus their consequents.
+
+    This is what ``morph_epw`` computes and writes. Consequents need no model
+    data of their own (see ``VARIABLE_CONSEQUENTS``).
+    """
+    resolved = resolve_variable_order(user_variables, data_source)
+    extra = set(consequent_variables(resolved))
+    if extra:
+        logger.info("Recomputing as well: %s", ", ".join(sorted(extra)))
+    return [variable for variable in MORPH_ORDER if variable in set(resolved) | extra]
 
 
 class MorphConfig:
@@ -296,6 +341,8 @@ class MorphConfig:
         self.model_pathways: list[str] = []
         self.model_variables: list[str] = []
         self.resolved_variables: list[str] = []
+        #: variables recomputed in the output without model data (3.6.0)
+        self.recomputed_variables: list[str] = []
         self.ch2025_station = None
         self.ch2025_notes: list[str] = []
         self.ch2025_full_coverage = bool(ch2025_full_coverage)
@@ -361,6 +408,7 @@ class MorphConfig:
             mapping = VARIABLE_MAPPING
 
         self.resolved_variables = resolve_variable_order(self.user_variables, self.data_source)
+        self.recomputed_variables = consequent_variables(self.resolved_variables)
 
         model_variables = []
         for variable in self.resolved_variables:

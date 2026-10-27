@@ -39,6 +39,7 @@ CI (`.github/workflows/ci.yml`) runs ruff, pytest on Python 3.9–3.13, and a bu
   selection), `assemble` (ensembles, climatologies), `custom` (CSV input),
   `ch2025` (Swiss station scenarios, offline)
 - `pyepwmorph/morph/procedures.py` — per-variable morphing maths
+- `pyepwmorph/morph/headers.py` — GROUND TEMPERATURES / DESIGN CONDITIONS for morphed files
 - `pyepwmorph/data/` — shipped parquet tables: CH2025 and the deprecated AMY diffuse table (included in the wheel via `artifacts`)
 - `examples/` — Justin's personal dev scripts and outputs; mostly untracked on purpose (listed in `.git/info/exclude` locally). Don't commit or clean them up.
 
@@ -56,6 +57,19 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 - `relative_delta` returns a ratio, not a percentage. Apply it as a ratio.
 - Dependencies are resolved transitively and written to the output, so a
   morphed EPW stays internally consistent (`MorphConfig.resolved_variables`).
+  Consequents (`VARIABLE_CONSEQUENTS`: dew point after temperature/humidity,
+  horizontal infrared after temperature/humidity/dew point/sky cover) are
+  recomputed in `morph_epw` without model data and are *not* part of
+  `resolve_variable_order`, so resolving a resolved list is idempotent.
+  Never add Dew Point to `VARIABLE_DEPENDENCIES['Humidity']` (cycle).
+- CMIP6 grid cells are chosen on the circular longitude distance
+  (`coordinate.nearest_cell_indices`); never `ds.sel(lon=..., method='nearest')`,
+  which breaks for western sites on 0..360 grids. A change to which cell is
+  chosen must bump `cache.CACHE_SCHEMA_VERSION`.
+- Morphed sky cover keeps `SKY_COVER_DECIMALS` (2); never round it to whole
+  tenths (that quantised the monthly shift, #11).
+- Morphed files never carry the source's DESIGN CONDITIONS (written as `0`);
+  ground temperatures follow the dry-bulb change (`morph.headers`).
 - EPWs have no 29 February. Solar and daily calculations use a non-leap
   year (`procedures._year_of`), whatever year the first data row carries.
 - Radiation: diffuse and direct normal keep the EPW's own split
@@ -83,7 +97,7 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
 
 ## Downstream contract (boundary-conditions backend)
 
-The app depends on `pyepwmorph>=3.2.0` and uses these directly. Changing any
+The app depends on `pyepwmorph>=3.6.0` and uses these directly. Changing any
 of them is a breaking change for the app: bump accordingly, note it in the
 CHANGELOG, and update the app in the same piece of work.
 
@@ -105,7 +119,11 @@ CHANGELOG, and update the app in the same piece of work.
   `models.ch2025.CH2025_BBOX`
 - `tools.io.write_period_of_record(path, start, end)` (since 3.2.0; public API,
   though the app no longer calls it: weather-file-builder 2.1 writes the period itself)
-- `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app; 3.1.0 added `Radiation`)
+- `tools.configuration.VARIABLE_MAPPING`, `VARIABLE_DEPENDENCIES` (copied by hand in the app; 3.1.0 added `Radiation`).
+  `VARIABLE_CONSEQUENTS` / `MorphConfig.recomputed_variables` (3.6.0) list what
+  is recomputed on top; the app shows them to users
+- `compile_climate_model_data`'s DataFrame carries `attrs["grid_cells"]`
+  (3.6.0), which `morph_epw` names in COMMENTS 2; the app passes the frames through unchanged
 - `tools.workflow.compile_climate_model_data(model_sources, pathway, variable,
   longitude, latitude, percentiles, time_slices=None)`
 - `tools.workflow.morph_epw(epw, variables, baseline_range, target_range,

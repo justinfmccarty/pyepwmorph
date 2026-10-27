@@ -9,6 +9,7 @@ import logging
 import os
 
 from pyepwmorph.models import access, assemble, ch2025, coordinate, custom
+from pyepwmorph.morph import headers as morph_headers
 from pyepwmorph.morph import procedures
 from pyepwmorph.tools import cache
 from pyepwmorph.tools import configuration as morph_config
@@ -66,7 +67,17 @@ def compile_climate_model_data(model_sources, pathway, variable, longitude, lati
             time_slices=time_slices,
         )
 
-    return assemble.build_cmip6_ensemble(percentiles, variable, datasets)
+    ensemble = assemble.build_cmip6_ensemble(percentiles, variable, datasets)
+    cells = coordinate.cell_summary(datasets, latitude, longitude)
+    for name, cell in cells.items():
+        logger.info(
+            "%s %s %s: grid cell %.3f, %.3f, %.1f km from the site",
+            coordinate.source_label(name), pathway, variable,
+            cell["lat"], cell["lon"], cell["distance_km"],
+        )
+    # read by morph_epw to name the cells in the output's comment
+    ensemble.attrs["grid_cells"] = {coordinate.source_label(name): cell for name, cell in cells.items()}
+    return ensemble
 
 
 def iterate_compile_model_data(pathways, variables, model_sources, longitude, latitude, percentiles,
@@ -199,6 +210,55 @@ def compile_ch2025_model_data(station_id, pathways, variables, percentiles):
 # Morphing
 # ---------------------------------------------------------------------------
 
+#: EPW header order, used to place a block the source file did not have.
+_HEADER_ORDER = [
+    'LOCATION', 'DESIGN CONDITIONS', 'TYPICAL/EXTREME PERIODS', 'GROUND TEMPERATURES',
+    'HOLIDAYS/DAYLIGHT SAVINGS', 'COMMENTS 1', 'COMMENTS 2', 'DATA PERIODS',
+]
+
+
+def _set_header(epw_object, key, fields):
+    """Set a header block, inserting it in EPW order if the file lacks it."""
+    if key in epw_object.headers:
+        epw_object.headers[key] = fields
+        return
+    rank = {name: index for index, name in enumerate(_HEADER_ORDER)}
+    rebuilt = {}
+    inserted = False
+    for name, value in epw_object.headers.items():
+        if not inserted and rank.get(name, -1) > rank[key]:
+            rebuilt[key] = fields
+            inserted = True
+        rebuilt[name] = value
+    if not inserted:
+        rebuilt[key] = fields
+    epw_object.headers = rebuilt
+
+
+def _update_climate_headers(epw_object, present, morphed):
+    """Bring GROUND TEMPERATURES and DESIGN CONDITIONS in line with the morph (issue #10).
+
+    Returns the note for COMMENTS 2 (no commas).
+    """
+    notes = []
+    if 'drybulb_C' in morphed:
+        fields, how = morph_headers.morphed_ground_temperatures(
+            epw_object.headers.get('GROUND TEMPERATURES'),
+            present['drybulb_C'], morphed['drybulb_C'], present['month'],
+        )
+        if fields is not None:
+            _set_header(epw_object, 'GROUND TEMPERATURES', fields)
+            notes.append(
+                "ground temperatures shifted with the dry-bulb change" if how == "shifted"
+                else "ground temperatures computed from the morphed air (Kusuda)"
+            )
+    design = epw_object.headers.get('DESIGN CONDITIONS')
+    if design and design[0].strip() not in ('', '0'):
+        _set_header(epw_object, 'DESIGN CONDITIONS', ['0'])
+        notes.append("design conditions removed: they described the baseline climate")
+    return "".join(f" [{note}]" for note in notes)
+
+
 def morph_epw(
     epw_file,
     user_variables,
@@ -217,8 +277,11 @@ def morph_epw(
     sorted into a single morphing order (see
     ``configuration.resolve_variable_order``), so every variable is computed
     exactly once and every dependency is already morphed when it is needed.
-    All resolved variables are written to the returned EPW, which keeps the
-    output file internally consistent.
+    Consequents are then recomputed without model data of their own
+    (``configuration.morph_order_with_consequents``): dew point after
+    temperature or humidity, horizontal infrared after temperature,
+    humidity, dew point or sky cover. All of these are written to the
+    returned EPW, which keeps the output file internally consistent.
 
     Parameters
     ----------
@@ -302,8 +365,25 @@ def morph_epw(
             exthor, extdirnor, longitude, latitude, utc_offset,
         )
 
+    def _grid_cell_note():
+        """Name the CMIP6 grid cell each model's data came from (no commas: EPW header)."""
+        cells = {}
+        for scenario in (reference_scenario, pathway):
+            for frame in model_data_dict.get(scenario, {}).values():
+                for model, cell in getattr(frame, "attrs", {}).get("grid_cells", {}).items():
+                    cells.setdefault(model, set()).add(
+                        (cell["lat"], cell["lon"], cell["distance_km"])
+                    )
+        if not cells:
+            return ""
+        parts = []
+        for model in sorted(cells):
+            for lat, lon, distance in sorted(cells[model]):
+                parts.append(f"{model} {lat:.2f} {lon:.2f} {distance:.0f} km")
+        return f" [CMIP6 grid cells lat lon distance: {'; '.join(parts)}]"
+
     morphed = {}
-    for variable in morph_config.resolve_variable_order(user_variables, data_source):
+    for variable in morph_config.morph_order_with_consequents(user_variables, data_source):
         if variable == 'Pressure':
             psl_base, psl_future = _climatology('psl')
             morphed['atmos_Pa'] = procedures.morph_psl(
@@ -336,8 +416,11 @@ def morph_epw(
                 )
 
         elif variable == 'Dew Point':
+            # after a temperature-only (or CH2025 humidity-only) morph, the
+            # unmorphed side comes from the file itself
             morphed['dewpoint_C'] = procedures.morph_dewpt(
-                morphed['drybulb_C'], morphed['relhum_percent'],
+                morphed.get('drybulb_C', present['drybulb_C']),
+                morphed.get('relhum_percent', present['relhum_percent']),
             )
 
         elif variable == 'Wind':
@@ -393,7 +476,25 @@ def morph_epw(
             morphed['totskycvr_tenths'] = totskycvr
             morphed['opaqskycvr_tenths'] = opaqskycvr
 
+        elif variable == 'Horizontal Infrared':
+            if 'horirsky_Whm2' in present:
+                # a recomputed dew point is compared with the present one
+                # computed the same way, so recomputation alone changes nothing
+                present_dewpt = present['dewpoint_C']
+                if 'dewpoint_C' in morphed:
+                    present_dewpt = procedures.morph_dewpt(present['drybulb_C'], present['relhum_percent'])
+                morphed['horirsky_Whm2'] = procedures.morph_horizontal_ir(
+                    present['horirsky_Whm2'],
+                    present['drybulb_C'], present_dewpt, present['opaqskycvr_tenths'],
+                    morphed.get('drybulb_C', present['drybulb_C']),
+                    morphed.get('dewpoint_C', present['dewpoint_C']),
+                    morphed.get('opaqskycvr_tenths', present['opaqskycvr_tenths']),
+                )
+
+    header_note = ""
     if morphed:
+        # before the columns are replaced: *present* is the same dataframe
+        header_note = _update_climate_headers(epw_object, present, morphed)
         for column, values in morphed.items():
             epw_object.dataframe[column] = values
         for column, values in filled.items():
@@ -409,13 +510,14 @@ def morph_epw(
             station_note = f" station {station_label}" if station_label else ""
             comment = (
                 f" morphed for {pathway} with CH2025{station_note} with pyepwmorph"
-                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}"
+                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}{header_note}"
                 f" {ch2025.CH2025_CITATION}"
             )
         else:
             comment = (
                 f" morphed for {pathway} ({target_range[0]}-{target_range[1]}) with pyepwmorph"
-                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}"
+                f" on {datetime.datetime.now().isoformat()} [{' '.join(morphed)}]{sky_note}{header_note}"
+                f"{_grid_cell_note()}"
             )
         epw_object.add_comment(comment)
 

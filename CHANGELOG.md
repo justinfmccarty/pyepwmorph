@@ -4,6 +4,70 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.6.0
+
+Numerical changes: regenerate CMIP6 morphs of **western-hemisphere** sites
+(they used the wrong grid cell), morphs that included **Clouds and
+Radiation** (sky cover), and any morph with **Temperature or Humidity
+without Dew Point** (dew point was left at baseline). Morphs of
+temperature, humidity or sky cover now also change horizontal infrared, and
+temperature morphs the ground temperatures; every morph removes the DESIGN
+CONDITIONS header. No public function changed its signature.
+
+### Fixed
+
+- **CMIP6 longitude wrap** (#3). `coordinate_cmip6_data` passed the EPW
+  longitude (-180..180) straight to `ds.sel(..., method='nearest')`. On the
+  many CMIP6 grids that run 0..360, every site west of Greenwich took its
+  climate changes from the cell nearest 0 deg (New York's came from
+  eastern Spain). The nearest cell is now chosen on the circular
+  longitude distance (`coordinate.nearest_cell_indices`), which works for
+  either convention and across the 0/360 seam. `CACHE_SCHEMA_VERSION` is
+  now 3, so wrong cached entries are never read back.
+- **Dew point left at baseline** (#5). Morphing Humidity, or Temperature,
+  without Dew Point wrote a new relative humidity or dry-bulb next to the
+  old dew point (54 hours with dew point above dry-bulb in a Kyoto morph).
+  Dew point is now recomputed whenever Temperature or Humidity is morphed,
+  for every data source (new `configuration.VARIABLE_CONSEQUENTS`,
+  `consequent_variables`, `morph_order_with_consequents` and
+  `MorphConfig.recomputed_variables`). After a temperature-only morph it
+  uses the file's own relative humidity. No extra climate data is fetched.
+  `resolve_variable_order` and `MorphConfig.resolved_variables` are
+  unchanged.
+- **Sky cover rounding** (#11). `calc_tsc` and `calc_osc` rounded the
+  morphed sky cover to whole tenths, so a monthly change of -0.4 tenths did
+  nothing and -0.6 became -1.0 in every hour. Both now keep two decimals
+  (`procedures.SKY_COVER_DECIMALS`); EnergyPlus reads sky cover as a real
+  number. Ladybug reads these files but rounds sky cover to whole tenths
+  for its own analysis.
+
+### Added
+
+- **Horizontal infrared is morphed** (#9, option a). The file's own value
+  is scaled by the ratio of `eps_sky * sigma * T^4` (Clark and Allen with
+  the Walton cloud factor, EnergyPlus's default sky model) from the morphed
+  versus the present dry-bulb, dew point and opaque sky cover
+  (`procedures.morph_horizontal_ir`). Done whenever Temperature, Humidity,
+  Dew Point or Clouds and Radiation is morphed; missing values (9999) stay
+  missing; an unchanged climate leaves it unchanged. It does not see cloud
+  changes from CH2025, which has no cloud data.
+- **Ground temperatures follow the morph** (#10). Each depth shifts by the
+  change in monthly mean dry-bulb, with the seasonal part damped and lagged
+  the way the source header's ground temperatures are against the source
+  air (new `morph.headers`). Files without ground temperatures get them
+  from the morphed air (Kusuda and Achenbach, 0.5/2/4 m).
+- **CMIP6 grid cells are recorded.** Each model's cell and its distance
+  from the site are logged and named in COMMENTS 2;
+  `compile_climate_model_data` puts them in the returned DataFrame's
+  `attrs["grid_cells"]`.
+
+### Changed
+
+- **DESIGN CONDITIONS are removed from morphed files** (#10, interim). The
+  header is written as `DESIGN CONDITIONS,0` and COMMENTS 2 says why: the
+  source's ASHRAE values describe the baseline climate. Recomputing them
+  from the morphed hours is planned separately.
+
 ## 3.5.0
 
 Radiation morphs change: diffuse horizontal and direct normal now keep the

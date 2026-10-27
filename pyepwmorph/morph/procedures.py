@@ -27,6 +27,15 @@ MIN_SOLAR_ALTITUDE = 2.0
 #: Solar constant (W/m2), the hard ceiling for direct normal irradiance.
 SOLAR_CONSTANT = 1367.0
 
+#: Decimal places kept for morphed sky cover (in tenths). See ``calc_tsc``.
+SKY_COVER_DECIMALS = 2
+
+#: Stefan-Boltzmann constant (W/m2/K4).
+STEFAN_BOLTZMANN = 5.670374419e-8
+
+#: EPW missing-value marker for horizontal infrared radiation.
+IR_MISSING = 9999.0
+
 
 def _index_of(*candidates):
     """Return the first DatetimeIndex found among the candidate series."""
@@ -751,7 +760,11 @@ def calc_tsc(present_tsc, future_clt, baseline_clt):
     clt_change = morph_utils.month_factors(index, clt_delta)
 
     morphed_tsc = np.clip(shift(present_tsc.to_numpy(dtype=float), clt_change), 0, 10)
-    return pd.Series(np.rint(morphed_tsc).astype(int), index=index, name="totskycvr_tenths")
+    # Kept to two decimals rather than rounded to whole tenths: rounding
+    # turned monthly shifts below 0.5 into no change and shifts above 0.5
+    # into a full tenth (3.6.0, issue #11). EnergyPlus reads sky cover as a
+    # real number (and interpolates it between hours).
+    return pd.Series(np.round(morphed_tsc, SKY_COVER_DECIMALS), index=index, name="totskycvr_tenths")
 
 
 def calc_osc(morphed_tsc, present_osc, present_tsc):
@@ -782,4 +795,73 @@ def calc_osc(morphed_tsc, present_osc, present_tsc):
 
     osc_tsc_ratio = np.divide(opaque, total, out=np.zeros_like(opaque), where=total != 0)
     morphed_osc = np.clip(osc_tsc_ratio * np.asarray(morphed_tsc, dtype=float), 0, 10)
-    return pd.Series(np.rint(morphed_osc).astype(int), index=index, name="opaqskycvr_tenths")
+    return pd.Series(np.round(morphed_osc, SKY_COVER_DECIMALS), index=index, name="opaqskycvr_tenths")
+
+
+def sky_emissivity_clark_allen(drybulb_C, dewpoint_C, opaque_sky_cover_tenths):
+    """All-sky emissivity, Clark and Allen (1978) with the Walton cloud factor.
+
+    This is EnergyPlus's default sky model (``CalcSkyEmissivity``, Clark-Allen):
+    clear-sky emissivity from the dew point (never above dry-bulb), multiplied
+    by ``1 + 0.0224 N - 0.0035 N**2 + 0.00028 N**3`` with *N* the opaque sky
+    cover in tenths.
+    """
+    drybulb = np.asarray(drybulb_C, dtype=float)
+    dewpoint = np.minimum(np.asarray(dewpoint_C, dtype=float), drybulb)
+    cover = np.asarray(opaque_sky_cover_tenths, dtype=float)
+    clear = 0.787 + 0.764 * np.log((dewpoint + 273.15) / 273.15)
+    return clear * (1.0 + 0.0224 * cover - 0.0035 * cover ** 2 + 0.00028 * cover ** 3)
+
+
+def modelled_horizontal_ir(drybulb_C, dewpoint_C, opaque_sky_cover_tenths):
+    """Downwelling horizontal infrared (W/m2) as EnergyPlus models it: eps_sky * sigma * T**4."""
+    drybulb = np.asarray(drybulb_C, dtype=float)
+    emissivity = sky_emissivity_clark_allen(drybulb, dewpoint_C, opaque_sky_cover_tenths)
+    return emissivity * STEFAN_BOLTZMANN * (drybulb + 273.15) ** 4
+
+
+def morph_horizontal_ir(present_ir, present_dbt, present_dewpt, present_osc,
+                        future_dbt, future_dewpt, future_osc):
+    """Scale the EPW's horizontal infrared by the modelled change in longwave.
+
+    Option (a) of issue #9: the file's own value is multiplied by the ratio of
+    ``eps_sky * sigma * T**4`` (Clark-Allen, as in EnergyPlus) computed from the
+    morphed versus the present dry-bulb, dew point and opaque sky cover. So
+    the longwave follows the warming, the humidity change and, when Clouds and
+    Radiation is morphed, the cloud change, while each hour keeps the file's
+    own level. Works for every data source; it does not see cloud changes
+    from sources without cloud data (CH2025).
+
+    Missing hours (9999, or not positive) stay as they are. Missing opaque sky
+    cover (99) uses the present value on both sides, so only temperature and
+    humidity act on that hour. An unchanged climate returns the input.
+
+    Parameters
+    ----------
+    present_ir : pd.Series
+        Hourly horizontal infrared from the EPW (Wh/m2).
+    present_dbt, present_dewpt, present_osc : array_like
+        Hourly present dry-bulb (C), dew point (C) and opaque sky cover (tenths).
+    future_dbt, future_dewpt, future_osc : array_like
+        The same after morphing (pass the present series for unmorphed ones).
+
+    Returns
+    -------
+    pd.Series
+        ``horirsky_Whm2``, rounded to whole Wh/m2.
+    """
+    index = _index_of(present_ir, present_dbt, future_dbt)
+    ir = np.asarray(present_ir, dtype=float)
+    osc_now = np.asarray(present_osc, dtype=float)
+    osc_future = np.asarray(future_osc, dtype=float)
+    cover_missing = (osc_now >= 99) | (osc_future >= 99) | ~np.isfinite(osc_now) | ~np.isfinite(osc_future)
+    osc_now = np.where(cover_missing, np.where(osc_now >= 99, 0.0, osc_now), osc_now)
+    osc_future = np.where(cover_missing, osc_now, osc_future)
+
+    now = modelled_horizontal_ir(present_dbt, present_dewpt, osc_now)
+    future = modelled_horizontal_ir(future_dbt, future_dewpt, osc_future)
+    ratio = np.divide(future, now, out=np.ones_like(future), where=now > 0)
+
+    valid = np.isfinite(ir) & (ir > 0) & (ir < IR_MISSING)
+    morphed = np.where(valid, np.round(ir * ratio), ir)
+    return pd.Series(morphed, index=index, name="horirsky_Whm2")
