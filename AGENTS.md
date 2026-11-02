@@ -62,6 +62,8 @@ percentile ensemble) → `morph_epw` per target year × pathway × percentile �
   recomputed in `morph_epw` without model data and are *not* part of
   `resolve_variable_order`, so resolving a resolved list is idempotent.
   Never add Dew Point to `VARIABLE_DEPENDENCIES['Humidity']` (cycle).
+- `Clouds and Radiation` supersedes `Radiation`: if both are requested,
+  `resolve_variable_order` keeps only `Clouds and Radiation`.
 - CMIP6 grid cells are chosen on the circular longitude distance
   (`coordinate.nearest_cell_indices`); never `ds.sel(lon=..., method='nearest')`,
   which breaks for western sites on 0..360 grids. A change to which cell is

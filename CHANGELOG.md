@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 3.6.1
+
+No numerical change to the morphed weather data. Only the COMMENTS 2 header
+changes, for morphs that asked for both radiation options.
+
+### Fixed
+
+- **Radiation together with Clouds and Radiation.** Asking for both ran the
+  shortwave morph twice (same result), wrote "[sky cover left unmorphed]" to
+  COMMENTS 2 although sky cover was morphed, and logged the warning that
+  the longwave side does not follow the shortwave change.
+  `resolve_variable_order` now drops `Radiation` when `Clouds and Radiation`
+  is also requested, since the latter morphs the same shortwave fields and
+  sky cover on top.
+
 ## 3.6.0
 
 Numerical changes: regenerate CMIP6 morphs of **western-hemisphere** sites

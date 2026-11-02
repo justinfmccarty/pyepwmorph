@@ -173,6 +173,13 @@ def resolve_variable_order(user_variables, data_source="cmip6"):
     if added:
         logger.info("Added dependencies of the requested variables: %s", ", ".join(sorted(added)))
 
+    # Clouds and Radiation morphs the same shortwave fields as Radiation and
+    # sky cover on top, so asking for both means Clouds and Radiation.
+    if 'Radiation' in resolved and 'Clouds and Radiation' in resolved:
+        resolved.discard('Radiation')
+        logger.info("Radiation and Clouds and Radiation were both requested: "
+                    "using Clouds and Radiation, which also morphs the shortwave fields")
+
     unsupported = resolved - set(MORPH_ORDER)
     if unsupported:
         logger.warning("Ignoring unsupported morphing variable(s): %s", ", ".join(sorted(unsupported)))

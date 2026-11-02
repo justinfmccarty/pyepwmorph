@@ -942,6 +942,15 @@ class TestVariableOrdering:
         from pyepwmorph.tools.configuration import resolve_variable_order
         assert resolve_variable_order(['Temperature', 'Precipitation']) == ['Temperature']
 
+    def test_clouds_and_radiation_supersedes_radiation(self):
+        from pyepwmorph.tools.configuration import resolve_variable_order
+        for source in ('cmip6', 'custom'):
+            resolved = resolve_variable_order(
+                ['Radiation', 'Clouds and Radiation', 'Wind'], source,
+            )
+            assert resolved == ['Wind', 'Clouds and Radiation']
+            assert resolve_variable_order(resolved, source) == resolved
+
     def test_config_exposes_resolved_variables(self, epw_path, tmp_output):
         from pyepwmorph.tools import configuration as morph_config
         config = morph_config.MorphConfig(
@@ -1075,6 +1084,35 @@ def test_radiation_identity_leaves_shortwave_and_sky_cover(epw_path, identity_cl
             atol=0.01,
         )
     assert "sky cover left unmorphed" in morphed.headers["COMMENTS 2"][0]
+
+
+def test_radiation_with_clouds_morphs_sky_cover_once(epw_path, identity_climate_data, caplog):
+    """Asking for both radiation options is Clouds and Radiation alone.
+
+    The output must not claim sky cover was left unmorphed, and the
+    shortwave-only warning must not be logged.
+    """
+    import logging
+
+    from pyepwmorph.tools.workflow import morphing_workflow
+
+    with caplog.at_level(logging.WARNING, logger="pyepwmorph"):
+        result = morphing_workflow(
+            project_name="radiation-and-clouds",
+            epw_file=epw_path,
+            user_variables=["Radiation", "Clouds and Radiation"],
+            user_pathways=["target"],
+            percentiles=[50],
+            target_years=[2050],
+            data_source="custom",
+            custom_data=identity_climate_data,
+            reference_scenario="reference",
+            baseline_range=TEST_BASELINE_RANGE,
+            write_file=False,
+        )
+    morphed = result["2050"]["target"]["50"]
+    assert "sky cover left unmorphed" not in morphed.headers["COMMENTS 2"][0]
+    assert "leaving sky cover at baseline" not in caplog.text
 
 
 class TestIdentityMorph:
