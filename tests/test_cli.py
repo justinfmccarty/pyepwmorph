@@ -2,12 +2,16 @@
 
 import inspect
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from pyepwmorph import cli
 from pyepwmorph.tools import configuration as morph_config
 from pyepwmorph.tools import workflow
+from pyepwmorph.tools.io import Epw
 
 # Read before any test replaces the workflow with a recorder.
 WORKFLOW_PARAMETERS = set(inspect.signature(workflow.morphing_workflow).parameters)
@@ -255,3 +259,59 @@ class TestStaysInStepWithTheLibrary:
         config_parameters = set(inspect.signature(morph_config.MorphConfig.__init__).parameters)
         config_parameters -= {"self", "epw_fp"}
         assert config_parameters <= set(workflow_calls[0]) | cli.NOT_EXPOSED
+
+
+def _swiss_epw(tmp_path):
+    """The bundled EPW moved to Zurich, inside the CH2025 coverage."""
+    lines = (Path(__file__).parent / "test.epw").read_text(encoding="utf-8").splitlines(keepends=True)
+    fields = lines[0].rstrip("\n").split(",")
+    fields[6], fields[7], fields[9] = "47.37800", "8.56600", "556.0"
+    lines[0] = ",".join(fields) + "\n"
+    path = tmp_path / "swiss.epw"
+    path.write_text("".join(lines), encoding="utf-8")
+    return path
+
+
+class TestEndToEnd:
+    """The real workflow, offline: CH2025 ships with the package."""
+
+    ARGV = ["--data-source", "ch2025", "--variables", "Temperature", "Humidity",
+            "--pathways", "GWL 2.0", "--percentiles", "50"]
+
+    def test_writes_the_morphed_file_it_lists(self, tmp_path, capsys):
+        source = _swiss_epw(tmp_path)
+        out = tmp_path / "out"
+        with pytest.warns(UserWarning):
+            status = cli.main([str(source)] + self.ARGV + ["-o", str(out)])
+        assert status == 0
+        written = out / "gwl2.0_50.epw"
+        assert capsys.readouterr().out.splitlines() == [str(written)]
+        assert written.is_file()
+
+        before = Epw(str(source)).dataframe["drybulb_C"].mean()
+        after = Epw(str(written)).dataframe["drybulb_C"].mean()
+        assert 0.5 < after - before < 4.0
+
+    def test_no_write_leaves_the_disk_alone(self, tmp_path, capsys):
+        source = _swiss_epw(tmp_path)
+        before = sorted(tmp_path.iterdir())
+        with pytest.warns(UserWarning):
+            assert cli.main([str(source)] + self.ARGV + ["--no-write"]) == 0
+        assert sorted(tmp_path.iterdir()) == before
+        assert capsys.readouterr().out == ""
+
+    def test_an_unknown_warming_level_is_reported(self, tmp_path, capsys):
+        source = _swiss_epw(tmp_path)
+        argv = ["--data-source", "ch2025", "--variables", "Temperature",
+                "--pathways", "GWL 9.9", "--no-write"]
+        with pytest.warns(UserWarning):
+            assert cli.main([str(source)] + argv) == 1
+        assert "GWL 9.9" in capsys.readouterr().err
+
+    def test_runs_as_a_module(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, "-m", "pyepwmorph.cli", "--version"],
+            capture_output=True, text=True, check=False,
+        )
+        assert result.returncode == 0
+        assert "pyepwmorph" in result.stdout
