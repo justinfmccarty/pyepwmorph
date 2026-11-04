@@ -38,7 +38,11 @@ def _labels(mapping) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyepwmorph",
-        description="Morph an EnergyPlus weather file with climate model data.",
+        description=(
+            "Morph an EnergyPlus weather file with climate model data. "
+            "Give EPW first: a value after a multi-value option such as --variables "
+            "is read as one of its values (or separate EPW with --)."
+        ),
         epilog=_EPILOG.format(
             variables=_labels(morph_config.VARIABLE_MAPPING),
             cmip6=_labels(morph_config.CMIP6_PATHWAY_MAP),

@@ -180,6 +180,27 @@ class TestRejectedInput:
         assert "absent.epw" in capsys.readouterr().err
 
 
+class TestPositionalPlacement:
+
+    def test_epw_may_follow_a_double_dash(self, workflow_calls):
+        cli.main(["--variables", "Temperature", "--pathways", "Middle of the Road",
+                  "--target-years", "2050", "-o", "out", "--", "in.epw"])
+        assert workflow_calls[0]["epw_file"] == "in.epw"
+
+    def test_epw_after_a_multi_value_option_is_a_value_not_the_file(self, workflow_calls, capsys):
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main(["--pathways", "Middle of the Road", "--target-years", "2050", "-o", "out",
+                      "--variables", "Temperature", "in.epw"])
+        assert exit_info.value.code == 2
+        assert "EPW" in capsys.readouterr().err
+        assert workflow_calls == []
+
+    def test_help_tells_users_to_give_the_file_first(self, capsys):
+        with pytest.raises(SystemExit):
+            cli.main(["--help"])
+        assert "Give EPW first" in " ".join(capsys.readouterr().out.split())
+
+
 class TestOutputListing:
 
     def test_cmip6_results_list_year_pathway_percentile_files(self, monkeypatch, capsys):
