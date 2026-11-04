@@ -113,6 +113,25 @@ The signal is the change from the 1991-2020 reference climate to the chosen warm
 
 CH2025 data: MeteoSwiss & ETH Zurich (2025), Climate CH2025 - Daily Datasets, CC-BY 4.0, https://doi.org/10.18751/climate/scenarios/ch2025/data/1.0/
 
+### Command line
+
+`pyepwmorph` runs `morphing_workflow` from the shell. Options carry the names of the `MorphConfig` and workflow parameters; list options take several values or repeated flags.
+
+```bash
+pyepwmorph weather.epw \
+    --variables Temperature Humidity "Clouds and Radiation" \
+    --pathways "Middle of the Road" \
+    --target-years 2050 2080 \
+    --percentiles 10 50 90 \
+    -o output/
+
+pyepwmorph zurich.epw --data-source ch2025 \
+    --variables Temperature Humidity Wind Radiation \
+    --pathways "GWL 2.0" -o output/
+```
+
+The written files are listed on stdout; `-v` and `-vv` log progress. `--no-write` morphs without writing. `pyepwmorph --help` lists every option and the accepted labels. Custom CSV data is available from Python only.
+
 ### Measured data (actual meteorological year)
 
 Moved to [weather-file-builder](https://github.com/justinfmccarty/weather_file_builder)
@@ -205,6 +224,9 @@ uv run pytest --cov=pyepwmorph
 
 # Lint
 uv run ruff check pyepwmorph tests gui
+
+# Optional: lint on every commit
+uvx pre-commit install
 ```
 
 ### Releases

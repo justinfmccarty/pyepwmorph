@@ -65,6 +65,9 @@ dev = [
     "ruff>=0.4.0",
 ]
 
+[project.scripts]
+pyepwmorph = "pyepwmorph.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/justinfmccarty/pyepwmorph"
 Issues = "https://github.com/justinfmccarty/pyepwmorph/issues"

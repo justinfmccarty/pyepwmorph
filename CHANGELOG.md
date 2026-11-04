@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Command-line interface** (#7). `pyepwmorph` (also `python -m pyepwmorph.cli`)
+  wraps `morphing_workflow` for CMIP6 and CH2025. Options carry the names of
+  the `MorphConfig` and workflow parameters, list options accept repeated
+  values, and the written files are listed on stdout. Library errors are
+  reported as a message with exit status 1. `custom_data` stays Python-only.
+  A test fails when a `MorphConfig` or `morphing_workflow` parameter has no
+  flag and is not listed in `cli.NOT_EXPOSED`.
+- Optional `.pre-commit-config.yaml` running ruff, as in CI.
+
 ## 3.6.1
 
 No numerical change to the morphed weather data. Only the COMMENTS 2 header
